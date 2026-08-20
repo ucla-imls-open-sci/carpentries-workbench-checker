@@ -383,7 +383,7 @@ def _check_contractions(body: str, location: str) -> list[Finding]:
     return []
 
 
-def _check_divs(body: str, location: str) -> list[Finding]:
+def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]:
     findings = []
     stack: list[tuple[str, int]] = []
     seen_top_level: set[str] = set()
@@ -406,7 +406,7 @@ def _check_divs(body: str, location: str) -> list[Finding]:
                     Finding(
                         "info",
                         "divs",
-                        f"unrecognized div type `{div_type}` on line {lineno}"
+                        f"unrecognized div type `{div_type}` on line {lineno + line_offset}"
                         " -- verify against the Workbench style guide",
                         location=location,
                     )
@@ -417,7 +417,8 @@ def _check_divs(body: str, location: str) -> list[Finding]:
                     Finding(
                         "error",
                         "divs",
-                        f"extraneous closing `:::` on line {lineno} with no matching open div",
+                        f"extraneous closing `:::` on line {lineno + line_offset} with no "
+                        "matching open div",
                         location=location,
                     )
                 )
@@ -429,7 +430,7 @@ def _check_divs(body: str, location: str) -> list[Finding]:
             Finding(
                 "error",
                 "divs",
-                f"`{div_type}` div opened on line {lineno} is never closed",
+                f"`{div_type}` div opened on line {lineno + line_offset} is never closed",
                 location=location,
             )
         )
@@ -448,7 +449,7 @@ def _check_divs(body: str, location: str) -> list[Finding]:
     return findings
 
 
-def _check_headings(body: str, location: str) -> list[Finding]:
+def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Finding]:
     findings = []
     seen: dict[str, int] = {}
     first_heading_seen = False
@@ -461,13 +462,14 @@ def _check_headings(body: str, location: str) -> list[Finding]:
         if not match:
             continue
         level, text = len(match.group(1)), match.group(2).strip()
+        reported_line = lineno + line_offset
 
         if level == 1:
             findings.append(
                 Finding(
                     "error",
                     "headings",
-                    f"level-1 heading `# {text}` on line {lineno}"
+                    f"level-1 heading `# {text}` on line {reported_line}"
                     " -- episodes must not use H1, start at H2",
                     location=location,
                 )
@@ -477,8 +479,8 @@ def _check_headings(body: str, location: str) -> list[Finding]:
                 Finding(
                     "warning",
                     "headings",
-                    f"first heading `{'#' * level} {text}` on line {lineno} is level {level},"
-                    " expected level 2",
+                    f"first heading `{'#' * level} {text}` on line {reported_line} is level "
+                    f"{level}, expected level 2",
                     location=location,
                 )
             )
@@ -491,21 +493,26 @@ def _check_headings(body: str, location: str) -> list[Finding]:
                 Finding(
                     "warning",
                     "headings",
-                    f"heading `{text}` on line {lineno} duplicates the one on line {seen[text]}",
+                    f"heading `{text}` on line {reported_line} duplicates the one on line "
+                    f"{seen[text]}",
                     location=location,
                 )
             )
         else:
-            seen[text] = lineno
+            seen[text] = reported_line
 
     return findings
 
 
-def _check_links(body: str, lesson_dir: Path, location: str) -> list[Finding]:
+def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 0) -> list[Finding]:
     findings = []
     episode_dir = (lesson_dir / "episodes") if (lesson_dir / "episodes").exists() else lesson_dir
+    in_code = _code_fence_mask(body)
 
-    for lineno, line in enumerate(body.splitlines(), start=1):
+    for i, line in enumerate(body.splitlines()):
+        if in_code[i]:
+            continue
+        lineno = i + 1 + line_offset
         for alt, path in IMAGE_RE.findall(line):
             if not alt.strip():
                 findings.append(
@@ -585,13 +592,19 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
         )
         body = text
         front_matter = {}
+        line_offset = 0
     else:
         front_matter, body = parsed
         findings.extend(_check_front_matter(front_matter, location))
+        # Every check below reports line numbers relative to `body`, which
+        # starts after the front matter -- offset them back to real file
+        # line numbers, or every reported line is wrong by the front
+        # matter's length.
+        line_offset = text[: len(text) - len(body)].count("\n")
 
-    findings.extend(_check_divs(body, location))
-    findings.extend(_check_headings(body, location))
-    findings.extend(_check_links(body, lesson_dir, location))
+    findings.extend(_check_divs(body, location, line_offset))
+    findings.extend(_check_headings(body, location, line_offset))
+    findings.extend(_check_links(body, lesson_dir, location, line_offset))
     objective_findings, objective_count = _check_objective_verbs(body, location)
     findings.extend(objective_findings)
     findings.extend(_check_contractions(body, location))
