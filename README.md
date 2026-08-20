@@ -121,12 +121,17 @@ throughput long before you run out of RAM outright.
 | Category | What we check | Mirrors |
 |---|---|---|
 | `config` | Placeholder values left unfilled, `created` date, episode list vs. files on disk | `sandpaper::validate_lesson()` |
-| `front-matter` | `title` / `teaching` / `exercises` present and numeric | `sandpaper::validate_lesson()` |
+| `front-matter` | `title` / `teaching` / `exercises` present and numeric, episode length (`teaching`+`exercises`) roughly 20–60 min | `sandpaper::validate_lesson()`, [CLDT episode scope guidance](https://carpentries.github.io/lesson-development-training/aio.html) |
 | `divs` | Required `questions`/`objectives`/`keypoints`, balanced `:::` fences, recognized div types, challenge/solution counts | `pegboard::validate_divs()` |
 | `headings` | First heading is `##`, no `#`, no duplicate headings | `pegboard::validate_headings()` |
-| `links` | Missing alt text, broken internal links/images (including `episodes/fig/`-relative images and `.html`→`.md` resolution) | `pegboard::validate_links()` |
+| `links` | Missing alt text, broken internal links/images (including `episodes/fig/`-relative images and `.html`→`.md` resolution), generic link text (`"click here"`) | `pegboard::validate_links()`, [Carpentries Lab reviewer checklist](https://github.com/carpentries-lab/reviews/blob/main/docs/reviewer_guide.md) |
+| `objectives` | Weak/unmeasurable objective verbs (`know`, `understand`, `appreciate`, ...) vs. action verbs (`explain`, `choose`, `predict`, ...) | CLDT's SMART objectives guidance |
+| `style` | Heavy contraction use | Carpentries Lab reviewer checklist (accessibility, translation/ESL learners) |
+| `config` | *(also)* missing lesson glossary (`reference.md`) | Carpentries Lab reviewer checklist |
 
 Div and heading checks skip content inside fenced code blocks (```` ``` ````/`~~~`) — a lesson that teaches Markdown, Workbench syntax, or shell `#` comments will contain literal `:::`/`#` text that isn't a real div or heading.
+
+The `objectives`, `style`, and glossary checks aren't things `sandpaper`/`pegboard` check at all — they come from [Collaborative Lesson Development Training](https://carpentries.github.io/lesson-development-training/aio.html) and [The Carpentries Lab's reviewer checklist](https://github.com/carpentries-lab/reviews/blob/main/docs/reviewer_guide.md), the same two sources the `--ai` review's retrieval now pulls from (alongside the style guide) so its narrative review grades against the same rubric a human Lab reviewer would.
 
 ## Testing
 

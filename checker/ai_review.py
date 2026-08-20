@@ -3,9 +3,12 @@
 The mechanical checks in lesson_check.py already catch structural problems
 (missing blocks, bad headings, broken links) deterministically and for free.
 This module is for the qualitative pass an LLM is actually good at: does the
-episode read well, does it follow the Carpentries style guide, are the
-challenges pedagogically sound. Retrieval context (the style guide + episode
-structure docs) is embedded locally with Ollama regardless of which backend
+episode read well, are the objectives genuinely SMART, do the challenges
+actually assess them with diagnostic power, is the pacing/difficulty right
+for the stated audience. The review criteria and retrieval context both come
+from the Carpentries style guide, the Collaborative Lesson Development
+Training guidance, and The Carpentries Lab's own reviewer checklist --
+retrieval is embedded locally with Ollama regardless of which backend
 answers the question, since embeddings are cheap and fast to run on-device.
 
 Three backends:
@@ -34,6 +37,12 @@ from checker.report import Finding
 REFERENCE_URLS = [
     "https://carpentries.github.io/sandpaper-docs/instructor/style.html",
     "https://carpentries.github.io/sandpaper-docs/episodes.html",
+    # Collaborative Lesson Development Training: backward design, SMART
+    # objectives, formative assessment cadence, scope management, accessibility.
+    "https://carpentries.github.io/lesson-development-training/aio.html",
+    # The Carpentries Lab's actual lesson-reviewer checklist -- this is the
+    # rubric a human reviewer would grade the lesson against.
+    "https://raw.githubusercontent.com/carpentries-lab/reviews/main/docs/reviewer_guide.md",
 ]
 
 EMBED_MODEL = "nomic-embed-text"
@@ -76,10 +85,12 @@ def _build_prompt(episode_text: str, findings: list[Finding], style_context: str
         )
         or "(none -- the episode passed all mechanical structure checks)"
     )
-    return f"""You are reviewing a Carpentries Workbench lesson episode for writing quality
-and pedagogy, using the official Carpentries style guide as your reference.
+    return f"""You are reviewing a Carpentries Workbench lesson episode the way a human
+reviewer for The Carpentries Lab would, using the official style guide, the
+Collaborative Lesson Development Training guidance, and the Lab's own
+reviewer checklist as your reference.
 
-Style guide excerpts (retrieved for relevance to this episode):
+Reference excerpts (retrieved for relevance to this episode):
 {style_context}
 
 Mechanical structure issues already found by an automated checker (do not
@@ -91,11 +102,22 @@ Episode text:
 {episode_text}
 ---
 
-Give a short narrative review (bulleted is fine) covering:
-1. Whether the challenges are pedagogically well-formed (clear goal, appropriate difficulty).
-2. Tone and clarity against the Carpentries style guide.
-3. Anything confusing or under-explained for a learner encountering this material fresh.
-Keep it concrete -- point at specific lines or phrases, don't just restate the checklist above."""
+Give a short narrative review (bulleted is fine), grading against the same
+criteria a Carpentries Lab reviewer uses:
+1. Learning objectives: are they specific and measurable (SMART), not just
+   grammatically an action verb but genuinely observable/assessable?
+2. Formative assessment: do challenges/exercises actually test each
+   objective, with enough variety and diagnostic power to catch
+   misconceptions -- not just "type this command and see what happens"?
+3. Audience fit: is exercise difficulty and pacing appropriate for the
+   stated target audience, and is content free of unstated
+   expert-assumptions or sudden difficulty jumps?
+4. Scope and cognitive load: is this episode trying to cover too much, or
+   is content well-sequenced with worked examples before exercises?
+5. Tone: dismissive language ("simply", "just"), unstated assumptions, or
+   unexplained jargon that would trip up a learner encountering this fresh.
+Keep it concrete -- point at specific lines or phrases, don't just restate
+the checklist above."""
 
 
 def _check_with_ollama(prompt: str, model: str) -> str:
