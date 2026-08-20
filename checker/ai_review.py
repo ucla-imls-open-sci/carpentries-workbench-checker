@@ -109,10 +109,17 @@ def _check_with_claude(prompt: str, model: str) -> str:
     import anthropic
 
     client = anthropic.Anthropic()
+    kwargs = {}
+    # `effort` isn't accepted by every model (e.g. Haiku) -- only current-gen
+    # Opus/Sonnet reliably support it, and this is intelligence-sensitive work
+    # (judging pedagogy and style), so ask for more of it where we can.
+    if "opus" in model or "sonnet" in model:
+        kwargs["output_config"] = {"effort": "high"}
     response = client.messages.create(
         model=model,
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
+        **kwargs,
     )
     return "".join(block.text for block in response.content if block.type == "text")
 

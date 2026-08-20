@@ -49,6 +49,31 @@ DIV_FENCE_RE = re.compile(r"^(:{3,})\s*\{?\.?([a-zA-Z-]*)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)")
+CODE_FENCE_RE = re.compile(r"^(```+|~~~+)")
+
+
+def _code_fence_mask(body: str) -> list[bool]:
+    """One bool per line: True if that line falls inside a fenced code block.
+
+    A lesson teaching Markdown, Workbench syntax, or shell `#` comments will
+    contain literal `:::` or `#` text inside ```/~~~ blocks -- those aren't
+    real divs or headings and must not be checked as such.
+    """
+    mask = []
+    in_fence = False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not in_fence:
+            if CODE_FENCE_RE.match(stripped):
+                in_fence = True
+                mask.append(True)
+            else:
+                mask.append(False)
+        else:
+            mask.append(True)
+            if CODE_FENCE_RE.match(stripped):
+                in_fence = False
+    return mask
 
 
 def check_config(lesson_dir: Path) -> list[Finding]:
@@ -109,7 +134,8 @@ def check_config(lesson_dir: Path) -> list[Finding]:
             )
         )
 
-    listed_episodes = config.get("episodes") or []
+    episodes_field = config.get("episodes")
+    listed_episodes = episodes_field or []
     episodes_dir = lesson_dir / "episodes"
     on_disk = (
         sorted(p.name for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd"))
@@ -128,17 +154,21 @@ def check_config(lesson_dir: Path) -> list[Finding]:
             )
         )
 
-    unlisted = [e for e in on_disk if e not in listed_episodes]
-    for name in unlisted:
-        findings.append(
-            Finding(
-                "warning",
-                "config",
-                f"episodes/{name} exists but is not listed in config.yaml `episodes:`",
-                location="config.yaml",
-                hint="Add it to the episodes list so it's included and ordered in the build.",
+    # A blank `episodes:` field is valid and documented: sandpaper then includes
+    # every file under episodes/ automatically, in alphabetical order. Only flag
+    # "unlisted" files when the author is curating an explicit ordered list.
+    if episodes_field:
+        unlisted = [e for e in on_disk if e not in listed_episodes]
+        for name in unlisted:
+            findings.append(
+                Finding(
+                    "warning",
+                    "config",
+                    f"episodes/{name} exists but is not listed in config.yaml `episodes:`",
+                    location="config.yaml",
+                    hint="Add it to the episodes list so it's included and ordered in the build.",
+                )
             )
-        )
 
     return findings
 
@@ -184,8 +214,11 @@ def _check_divs(body: str, location: str) -> list[Finding]:
     findings = []
     stack: list[tuple[str, int]] = []
     seen_top_level: set[str] = set()
+    in_code = _code_fence_mask(body)
 
     for lineno, line in enumerate(body.splitlines(), start=1):
+        if in_code[lineno - 1]:
+            continue
         match = DIV_FENCE_RE.match(line.strip())
         if not match:
             continue
@@ -246,8 +279,11 @@ def _check_headings(body: str, location: str) -> list[Finding]:
     findings = []
     seen: dict[str, int] = {}
     first_heading_seen = False
+    in_code = _code_fence_mask(body)
 
     for lineno, line in enumerate(body.splitlines(), start=1):
+        if in_code[lineno - 1]:
+            continue
         match = HEADING_RE.match(line)
         if not match:
             continue
@@ -372,8 +408,18 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_headings(body, location))
     findings.extend(_check_links(body, lesson_dir, location))
 
-    challenges = len(re.findall(r"^:{3,}\s*\{?\.?challenge", body, re.MULTILINE))
-    solutions = len(re.findall(r"^:{3,}\s*\{?\.?solution", body, re.MULTILINE))
+    in_code = _code_fence_mask(body)
+    lines = body.splitlines()
+    challenges = sum(
+        1
+        for i, ln in enumerate(lines)
+        if not in_code[i] and re.match(r"^:{3,}\s*\{?\.?challenge", ln)
+    )
+    solutions = sum(
+        1
+        for i, ln in enumerate(lines)
+        if not in_code[i] and re.match(r"^:{3,}\s*\{?\.?solution", ln)
+    )
     if challenges > solutions:
         findings.append(
             Finding(

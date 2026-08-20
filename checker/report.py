@@ -102,8 +102,10 @@ def render_json(findings: list[Finding], title: str) -> str:
 
 def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
     """Render a markdown report to HTML with Quarto, if it's installed. Returns
-    the output path on success, or None if quarto isn't available (caller
-    should fall back to the plain markdown/terminal report, not fail)."""
+    the output path on success, or None if quarto isn't on PATH at all (caller
+    should fall back to the plain markdown/terminal report, not fail). Raises
+    RuntimeError if quarto is present but the render itself fails, so that
+    error doesn't get silently swallowed and mistaken for "quarto missing"."""
     if shutil.which("quarto") is None:
         return None
 
@@ -112,12 +114,14 @@ def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
         qmd_path.write_text(
             "---\ntitle: Lesson Check Report\nformat: html\n---\n\n" + markdown_text
         )
-        subprocess.run(
+        result = subprocess.run(
             ["quarto", "render", str(qmd_path), "--to", "html", "-o", out_path.name],
             cwd=tmp,
-            check=True,
             capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"quarto render failed: {result.stderr.strip()}")
         rendered = Path(tmp) / out_path.name
         out_path.write_bytes(rendered.read_bytes())
     return out_path

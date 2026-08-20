@@ -17,13 +17,20 @@ authors:
     affiliation: UCLA DataSquad
 repository-code: 'https://github.com/ucla-imls-open-sci/imls-tools'
 abstract: |2
-    A set of scripts for validating the content structure of a Carpentries-style lesson repository. Includes both a shell script (content_check.sh) and a GUI-enabled Python script (content_check.py) with options to validate individual lesson episodes, folders, or the entire repository. Also includes llama-checker.py for embedding and language model-based checks. See documentation site for full usage instructions.
+    A pixi-managed lesson checker for Carpentries Workbench lessons: deterministic
+    structure checks (front matter, required blocks, headings, links/images) that
+    mirror sandpaper/pegboard's CI validation, plus an optional AI narrative
+    review of writing and pedagogy selectable across local (Ollama) and hosted
+    (Claude, Codex) backends. See the documentation site for full usage
+    instructions.
 keywords:
   - lesson validation
   - Carpentries
   - content checking
-  - shell script
+  - pixi
+  - Ollama
+  - AI-assisted review
   - Python
   - open science
 license: BSD-3-Clause
-commit: fcf6bb7de2e155fd67889816f61a50fef82038e5
+commit: 82ce89cc43cd38341ca267faefdf203ef8b185bc
