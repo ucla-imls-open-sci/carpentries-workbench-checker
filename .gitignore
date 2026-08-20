@@ -12,3 +12,9 @@ Lesson_Proposals*
 
 # Misc
 .DS_Store
+__pycache__/
+*.pyc
+
+# Pixi
+.pixi/
+*.egg-info/

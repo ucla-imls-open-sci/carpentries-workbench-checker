@@ -1,43 +1,146 @@
-# Content Check Scripts
+IMLS Tools
+==========
 
-There are two content check scripts in this repository. content_check.sh and content_check.py. Both scripts do the same thing except the
-python script has a gui that is easy to navigate.
+[![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 
-## content_check.py
+Local pre-flight checks for [Carpentries Workbench](https://carpentries.github.io/workbench/)
+lessons: a fast, deterministic structure check (front matter, required
+`:::` blocks, headings, links/images), plus an optional AI narrative review
+of writing and pedagogy. Point it at a local lesson directory or a lesson's
+git URL; run it before opening a PR instead of waiting on the sandpaper CI
+build.
 
-To run this script you need python3 installed. This script was written on python3.11. You will need to install the following packages:
-```
-pip install pysimplegui
+## Why two layers
+
+Real Carpentries CI (`sandpaper::validate_lesson()` and the `pegboard`
+package's `validate_divs()` / `validate_headings()` / `validate_links()`, run
+inside a Docker container on every PR) is authoritative but slow — several
+minutes, and it only runs after you push. `checker/lesson_check.py` mirrors
+the same rules locally, in under a second, with no dependencies beyond
+Python: required front matter (`title`, `teaching`, `exercises`), the three
+required top-level blocks (`questions`, `objectives`, `keypoints`), balanced
+and recognized `:::` div types, heading rules (start at `##`, no `#`, no
+duplicates), and broken internal links/images (including the
+`episodes/fig/`-relative image convention Workbench actually uses, and the
+fact that `.html` links point at rendered `.md` sources, not literal files).
+
+None of that requires a model. The AI layer (`checker/ai_review.py`) is for
+the part a deterministic checker can't do: whether a challenge is
+pedagogically sound, whether the tone matches the
+[style guide](https://carpentries.github.io/sandpaper-docs/instructor/style.html),
+whether something will confuse a learner encountering it fresh. It's given
+the mechanical findings as context so it doesn't repeat them.
+
+This is a local approximation, not a replacement for the real CI check —
+sandpaper is still the final word.
+
+## Setup
+
+Uses [pixi](https://pixi.sh) for the whole environment, including Ollama
+itself (installed from conda-forge, no separate `brew install ollama` step
+needed):
+
+```bash
+pixi install
 ```
 
-Once you install the package, you can run the script with
-```
-python3 content_check.py
-```
-You have the option to validate a single episode, the episode folder, the config.yaml, the entire repository. You can do this by either navigating to the file/folder containing what you wan to validate or by clicking on the `Remote Repo` button.
+## Running the checker
 
-## content_check.sh
-Has the same functionality as content_check.py. Make sure you have given the script execution permissions. You can do this with the following command in your terminal `chmod +x content_check.sh`.
-You can see the comprehensive list of commands by running the following shell command:
-```
-./content_check.sh --help
-```
-The most basic and general case is the following:
-```
-./content_check.sh -U <remote github url>
-```
-This will scan over the contents in the github url.
+```bash
+# Mechanical checks only, terminal output
+pixi run check ./my-lesson
 
-## llama-checker.py
-```
-ollama pull nomic-embed-text
-ollama pull mistral
-pip install langchain
-pip install langchain_community
-pip install bs4
-pip install tiktoken
-pip install chromadb
+# Or check a lesson straight from its git URL (clones to a temp dir, cleans up after)
+pixi run check https://github.com/librarycarpentry/lc-git.git
+
+# Markdown checklist you can paste into a PR description or read locally
+pixi run check ./my-lesson --format markdown --output report.md
+
+# Same, rendered to HTML with Quarto if you have it installed (falls back to
+# a warning + the markdown file if you don't)
+pixi run check ./my-lesson --format markdown --output report.md --html
+
+# One episode only
+pixi run check ./my-lesson --episode 03-sharing.md
+
+# Machine-readable, e.g. for a CI step of your own
+pixi run check ./my-lesson --format json
 ```
 
-## Documentation
-You can find a more comprehensive documentation of each script here at this [documentation site](https://ucla-imls-open-sci.info/ucla-imls-docs/docs/imls-tools).
+Exit code is `1` if any error-level finding was reported, `0` otherwise —
+safe to use in a pre-commit hook or your own CI step.
+
+### Adding the AI narrative review
+
+Off by default (it costs time, and for `claude`/`codex` it costs API usage).
+Add `--ai`:
+
+```bash
+pixi run check ./my-lesson --episode 03-sharing.md --ai --backend ollama
+pixi run check ./my-lesson --episode 03-sharing.md --ai --backend claude
+pixi run check ./my-lesson --episode 03-sharing.md --ai --backend codex
+```
+
+All three backends use the same local Ollama embedding model
+(`nomic-embed-text`) to retrieve relevant style-guide passages — that part
+never leaves your machine or costs anything, regardless of which backend
+answers the actual question.
+
+| Backend | What it needs | Notes |
+|---|---|---|
+| `ollama` | `pixi run pull-models` (see below), `ollama serve` running | Fully local, free, slower and less sharp than the API backends |
+| `claude` | `ANTHROPIC_API_KEY` set, or `ant auth login` | Uses the Anthropic Python SDK directly. Default model `claude-opus-5`; override with `--model claude-sonnet-5` or `--model claude-haiku-4-5` if you want cheaper/faster over Opus's quality |
+| `codex` | The [OpenAI Codex CLI](https://developers.openai.com/codex) (`npm install -g @openai/codex`) logged in and working (`codex exec "hello"` should just print a reply) | Shells out to `codex exec`; pass `--model <name>` to override its configured default |
+
+`--model` overrides the default for whichever `--backend` you picked.
+
+## Recommended local models (16GB Apple Silicon)
+
+Pull them with pixi:
+
+```bash
+pixi run pull-models          # nomic-embed-text + qwen3.5:9b-q4_K_M (default, balanced)
+pixi run pull-models-small     # nomic-embed-text + qwen3.5:4b (faster, lighter)
+pixi run pull-models-coding    # qwen2.5-coder:7b (for code-heavy lessons)
+```
+
+| Model | Download | Use it for | Why |
+|---|---|---|---|
+| `qwen3.5:9b-q4_K_M` (default) | ~6.6 GB | General episode review | Best balance of quality and footprint at this size — 256K context, leaves real headroom on 16GB while your browser/editor are also open |
+| `qwen3.5:4b` | ~3.4 GB | Quick iterative checks | Noticeably faster, still coherent; use while drafting, switch to the 9B for a final pass |
+| `qwen2.5-coder:7b` | ~4.7 GB | Lessons with heavy code blocks (shell, Python, R episodes) | Coder-tuned variant reviews code samples more carefully than the general model |
+| `gpt-oss:20b` | ~14 GB | A stretch option if you want the best local quality and can close everything else | Runs on 16GB via MXFP4 quantization, but leaves little headroom — expect it to be slow with other apps open |
+| `nomic-embed-text` | ~274 MB | Retrieval (used by every backend, not just `ollama`) | Small, fast, good enough for retrieving style-guide passages |
+
+Don't run the checker's Ollama backend and something else memory-hungry
+(another large model, a heavy IDE) at the same time on 16GB — swap will tank
+throughput long before you run out of RAM outright.
+
+## What each check maps to
+
+| Category | What we check | Mirrors |
+|---|---|---|
+| `config` | Placeholder values left unfilled, `created` date, episode list vs. files on disk | `sandpaper::validate_lesson()` |
+| `front-matter` | `title` / `teaching` / `exercises` present and numeric | `sandpaper::validate_lesson()` |
+| `divs` | Required `questions`/`objectives`/`keypoints`, balanced `:::` fences, recognized div types, challenge/solution counts | `pegboard::validate_divs()` |
+| `headings` | First heading is `##`, no `#`, no duplicate headings | `pegboard::validate_headings()` |
+| `links` | Missing alt text, broken internal links/images (including `episodes/fig/`-relative images and `.html`→`.md` resolution) | `pegboard::validate_links()` |
+
+## Migrating from the old scripts
+
+This replaces `content-checker/` (`content_check.py`, `content_check_cli.py`,
+`content_check.sh`) and `llama-checker.py`, which are removed. The old
+`content_check.sh -U <url>` remote-check and `-o <file>` output-to-file
+options are now `pixi run check <url>` and `--output <file>`; the GUI/CLI
+episode picker is gone in favor of `--episode <name>` (scripting-friendly,
+and doesn't hardcode a contributor's home directory the way the old shell
+script did).
+
+`proposal_analysis.ipynb` (scores lesson proposal PDFs against a rubric via
+the OpenAI API) is unrelated to lesson checking and untouched here — it
+still uses the legacy `openai.Completion.create` API and could use its own
+pass at some point.
+
+## License
+
+[BSD 3-Clause](LICENSE)
