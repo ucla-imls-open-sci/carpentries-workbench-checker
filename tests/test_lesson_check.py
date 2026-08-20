@@ -231,6 +231,23 @@ def test_links_html_target_resolves_against_md_source(tmp_path):
     assert not any("may be broken" in f.message for f in findings)
 
 
+def test_links_inside_code_fence_are_ignored(tmp_path):
+    # Real bug: a lesson showing learners example markdown to paste into
+    # their own README (e.g. a LICENSE badge link) had that illustrative
+    # link checked as if it were live prose, and flagged as broken.
+    lesson_dir = make_lesson(tmp_path)
+    body = "Add this to your README:\n```markdown\nSee the [LICENSE](LICENSE) file.\n```\n"
+    findings = _check_links(body, lesson_dir, "episodes/ep.md")
+    assert findings == []
+
+
+def test_links_line_offset_is_applied(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    body = "para\n\n![](fig/missing.png)\n"
+    findings = _check_links(body, lesson_dir, "episodes/ep.md", line_offset=5)
+    assert any("line 8" in f.message for f in findings)  # body line 3 + offset 5
+
+
 def test_links_generic_link_text_is_warning(tmp_path):
     lesson_dir = make_lesson(tmp_path)
     body = "Read more [here](https://example.org/docs).\n"
@@ -380,3 +397,21 @@ def test_check_episode_end_to_end_valid_episode_has_no_findings(tmp_path):
     path = lesson_dir / "episodes" / "01-intro.md"
     path.write_text(episode_text())
     assert check_episode(path, lesson_dir) == []
+
+
+def test_check_episode_reports_real_file_line_numbers_not_body_relative(tmp_path):
+    # Real bug: every check operated on `body` (text after the front-matter
+    # strip) but reported line numbers as if body started at line 1, so
+    # every finding's line number was off by the front matter's length.
+    lesson_dir = make_lesson(tmp_path)
+    path = lesson_dir / "episodes" / "01-intro.md"
+    # A level-1 heading is always an error, regardless of position -- unlike
+    # a bare H3, which is only flagged if it's the *first* heading.
+    full_text = episode_text(body=VALID_EPISODE_BODY + "\n# Stray H1\n")
+    path.write_text(full_text)
+    real_line = full_text.count("\n", 0, full_text.index("# Stray H1")) + 1
+
+    findings = check_episode(path, lesson_dir)
+    heading_findings = [f for f in findings if "Stray H1" in f.message]
+    assert heading_findings, "expected a level-1 heading finding"
+    assert f"line {real_line}" in heading_findings[0].message
