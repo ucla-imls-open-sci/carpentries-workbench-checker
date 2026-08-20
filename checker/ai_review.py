@@ -39,11 +39,48 @@ REFERENCE_URLS = [
     "https://carpentries.github.io/sandpaper-docs/episodes.html",
     # Collaborative Lesson Development Training: backward design, SMART
     # objectives, formative assessment cadence, scope management, accessibility.
+    # Retrieval is fine for this one -- it's long, and we only want the parts
+    # relevant to a given episode (elaboration/examples), not the whole thing
+    # verbatim in every prompt.
     "https://carpentries.github.io/lesson-development-training/aio.html",
-    # The Carpentries Lab's actual lesson-reviewer checklist -- this is the
-    # rubric a human reviewer would grade the lesson against.
-    "https://raw.githubusercontent.com/carpentries-lab/reviews/main/docs/reviewer_guide.md",
 ]
+
+# The Carpentries Lab's actual lesson-reviewer checklist -- the rubric a human
+# reviewer grades against. This is pinned directly into every prompt rather
+# than left to retrieval: it's short, and a rubric that might or might not
+# surface depending on chunk similarity isn't a rubric the review can be held
+# to. Retrieval above is for elaboration/examples; this is the actual grading
+# criteria. Verbatim from https://github.com/carpentries-lab/reviews/blob/main/docs/reviewer_guide.md
+LAB_CHECKLIST = """\
+Accessibility:
+- The alternative text of all figures is accurate and sufficiently detailed
+- The lesson content does not make extensive use of colloquialisms, region- or \
+culture-specific references, or idioms
+- The lesson content does not make extensive use of contractions
+
+Content:
+- Meets the objectives defined by the authors
+- Is appropriate for the target audience identified for the lesson
+- Is accurate, descriptive, and easy to understand
+- Is appropriately structured to manage cognitive load
+- Does not use dismissive language
+- The solutions to all exercises are accurate and sufficiently explained
+- The lesson includes exercises in a variety of formats
+- Exercise tasks and formats are appropriate for the expected experience level
+- All lesson and episode objectives are assessed by exercises or another \
+opportunity for formative assessment
+- Exercises are designed with diagnostic power
+
+Design:
+- Learning objectives for the lesson and its episodes are clear, descriptive, \
+and measurable
+- The target audience identified for the lesson is specific and realistic
+
+Supporting Information:
+- The list of required prior skills and/or knowledge is complete and accurate
+- The setup and installation instructions are complete, accurate, and easy to follow
+- No key terms are missing from the lesson glossary
+"""
 
 EMBED_MODEL = "nomic-embed-text"
 
@@ -86,26 +123,40 @@ def _build_prompt(episode_text: str, findings: list[Finding], style_context: str
         or "(none -- the episode passed all mechanical structure checks)"
     )
     return f"""You are reviewing a Carpentries Workbench lesson episode the way a human
-reviewer for The Carpentries Lab would, using the official style guide, the
-Collaborative Lesson Development Training guidance, and the Lab's own
-reviewer checklist as your reference.
+reviewer for The Carpentries Lab would.
 
-Reference excerpts (retrieved for relevance to this episode):
+The Carpentries Lab reviewer checklist -- grade against this directly, it is
+the actual rubric, not just background reading:
+{LAB_CHECKLIST}
+
+Supporting guidance (style guide + Collaborative Lesson Development Training,
+retrieved for relevance to this episode -- use for elaboration and examples,
+the checklist above is the grading criteria):
 {style_context}
 
 Mechanical structure issues already found by an automated checker (do not
 repeat these -- focus on what a checker can't catch):
 {mechanical_summary}
 
+One of the mechanical checks flags objectives that *open* with a vague verb
+(know/understand/appreciate/...) as a cheap heuristic. Do not treat that as
+your own standard: a verb not matching that denylist does not make an
+objective assessable, and a verb matching it does not make it unassessable
+("recognize" and "distinguish" can both be perfectly observable with the
+right exercise, "explain" can still be vague without one). Judge each
+objective by whether attainment is actually observable given what the
+episode assesses -- and if nothing does, say so, since that is the more
+useful finding than quibbling over the opening word.
+
 Episode text:
 ---
 {episode_text}
 ---
 
-Give a short narrative review (bulleted is fine), grading against the same
-criteria a Carpentries Lab reviewer uses:
-1. Learning objectives: are they specific and measurable (SMART), not just
-   grammatically an action verb but genuinely observable/assessable?
+Give a short narrative review (bulleted is fine), grading against the
+checklist above:
+1. Learning objectives: are they specific and measurable, genuinely
+   observable/assessable given what the episode actually tests?
 2. Formative assessment: do challenges/exercises actually test each
    objective, with enough variety and diagnostic power to catch
    misconceptions -- not just "type this command and see what happens"?
