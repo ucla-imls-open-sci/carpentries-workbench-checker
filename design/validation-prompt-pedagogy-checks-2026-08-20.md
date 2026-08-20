@@ -229,3 +229,46 @@ you're unsure rather than hedging generically. End with:
 - The single highest-priority fix before anything else, and why it beats
   the other candidates — including whether that's "add CI" over any of the
   check-quality issues above.
+
+## Adjudication outcome (2026-08-20)
+
+External model gave a confidence of 7/10 as-shipped, 8/10 once two specific
+bugs were fixed, with "add CI, make it required" as the top-priority fix.
+
+Verified independently before adopting anything (two turned out to be real
+confirmed bugs, one specific number turned out to be accurate, one was
+rejected on the reviewer's own reasoning):
+
+- **Glossary path** — confirmed real bug via `gh api` against
+  `workbench-template-md` and `librarycarpentry/lc-git`: both use
+  `learners/reference.md`, not the root-level path the check used. Fixed.
+- **Objective-verb word boundary** — confirmed real bug by reproducing it
+  directly: `.startswith("know")` matched "Knowledgeable use of Git". Fixed
+  with a proper regex.
+- **Contraction regex** — confirmed real bug by reproducing it: `\w+'s`
+  matched "learner's"/"Git's" as contractions. Rewrote against a closed set
+  of contractable stems, added rate normalization.
+- **"2-4 objectives per episode"** — verified as real, verbatim CLDT
+  guidance (re-fetched the page) rather than assumed accurate. Implemented
+  as an episode-scoped check.
+- **Lesson-level 3-4-objectives/6hr ratio** — rejected, agreeing with the
+  reviewer's own stated reasoning (no reliable way to locate lesson-level
+  objectives yet); implemented the episode-level version instead.
+- **Pin the Lab checklist verbatim into the prompt** rather than leave it to
+  retrieval — adopted, cheap and directly addresses "retrieval can omit the
+  very rubric it's supposed to enforce."
+- **Add CI** (`pixi run test` on push/PR) — adopted immediately, given it's
+  the direct fix for how the previous round's test suite went uncommitted
+  for a full review cycle undetected.
+- **Make CI a required status check** (branch protection) — deferred, asked
+  the maintainer directly rather than assumed, since it's a repo-wide policy
+  change affecting other collaborators, not a code fix.
+- Dataset CC0/license evidence reporting, per-topic retrieval rework, and
+  lesson-level teaching-time summaries were all deferred as new scope, not
+  bugs — no evidence yet they're worth the added complexity.
+
+Result: `checker/lesson_check.py`, `checker/ai_review.py`, and
+`tests/test_lesson_check.py` updated; `.github/workflows/test.yml` added;
+recalibrated against `~/projects/lessons/content` (real local lessons) to
+confirm the fixes fire on genuine signal, not just the synthetic test cases.
+35/35 tests passing. See PR #8 on `ucla-imls-open-sci/imls-tools`.
