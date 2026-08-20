@@ -159,6 +159,11 @@ the OpenAI API) is unrelated to lesson checking and untouched here — it
 still uses the legacy `openai.Completion.create` API and could use its own
 pass at some point.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Everyone participating is expected
+to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 [BSD 3-Clause](LICENSE)
