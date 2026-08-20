@@ -190,11 +190,23 @@ def _check_with_claude(prompt: str, model: str) -> str:
         kwargs["output_config"] = {"effort": "high"}
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        # 4096 was too low: extended thinking (on by default at effort=high)
+        # shares this same budget with the visible response, so a thorough
+        # review could burn the whole cap on thinking and return empty text,
+        # or get cut off mid-sentence. 16000 is Anthropic's own recommended
+        # non-streaming default -- high enough to avoid that, not so high it
+        # risks the SDK's non-streaming HTTP timeout.
+        max_tokens=16000,
         messages=[{"role": "user", "content": prompt}],
         **kwargs,
     )
-    return "".join(block.text for block in response.content if block.type == "text")
+    text = "".join(block.text for block in response.content if block.type == "text")
+    if response.stop_reason == "max_tokens":
+        text += (
+            "\n\n[review truncated -- hit the 16000-token output cap. If this "
+            "keeps happening, that's worth raising as an issue.]"
+        )
+    return text
 
 
 CODEX_TIMEOUT_SECONDS = 300
