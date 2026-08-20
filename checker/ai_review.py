@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import subprocess
 
-os.environ.setdefault("USER_AGENT", "imls-tools-lesson-checker/0.2")
+os.environ.setdefault("USER_AGENT", "carpentries-workbench-checker/0.2")
 
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import WebBaseLoader
@@ -101,7 +101,7 @@ def _get_retriever(embed_model: str):
         chunks = splitter.split_documents(docs_list)
         vectorstore = Chroma.from_documents(
             documents=chunks,
-            collection_name="imls-tools-style-guide",
+            collection_name="carpentries-workbench-checker-style-guide",
             embedding=OllamaEmbeddings(model=embed_model),
         )
         _RETRIEVER_CACHE[embed_model] = vectorstore.as_retriever()

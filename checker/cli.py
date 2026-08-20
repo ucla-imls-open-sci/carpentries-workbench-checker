@@ -20,7 +20,7 @@ from checker.report import render_html_via_quarto, render_json, render_markdown,
 
 def _resolve_target(target: str) -> tuple[Path, tempfile.TemporaryDirectory | None]:
     if target.startswith(("http://", "https://", "git@")):
-        tmp = tempfile.TemporaryDirectory(prefix="imls-tools-")
+        tmp = tempfile.TemporaryDirectory(prefix="carpentries-workbench-checker-")
         dest = Path(tmp.name) / "lesson"
         result = subprocess.run(
             ["git", "clone", "--quiet", "--depth", "1", target, str(dest)],
