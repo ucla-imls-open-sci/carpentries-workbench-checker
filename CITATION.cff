@@ -2,7 +2,7 @@
 # Visit https://bit.ly/cffinit to generate yours today!
 
 cff-version: 1.2.0
-title: IMLS Tools
+title: Carpentries Workbench Checker
 message: >-
   If you use this software, please cite it using the
   metadata from this file.
@@ -15,7 +15,11 @@ authors:
   - given-names: Eric
     family-names: Huang
     affiliation: UCLA DataSquad
-repository-code: 'https://github.com/ucla-imls-open-sci/imls-tools'
+  - given-names: Tim
+    family-names: Dennis
+    affiliation: UCLA Library Data Science Center
+    orcid: 'https://orcid.org/0000-0001-6632-3812'
+repository-code: 'https://github.com/ucla-imls-open-sci/carpentries-workbench-checker'
 abstract: |2
     A pixi-managed lesson checker for Carpentries Workbench lessons: deterministic
     structure checks (front matter, required blocks, headings, links/images) that
@@ -33,4 +37,4 @@ keywords:
   - Python
   - open science
 license: BSD-3-Clause
-commit: 82ce89cc43cd38341ca267faefdf203ef8b185bc
+commit: 8ed897ae14787e20b3b18b9512dd4c22a9846961

@@ -1,5 +1,5 @@
-IMLS Tools
-==========
+Carpentries Workbench Checker
+==============================
 
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 
