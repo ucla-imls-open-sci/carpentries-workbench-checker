@@ -44,6 +44,27 @@ CONFIG_PLACEHOLDER_VALUES = {
     "source": "https://github.com/carpentries/workbench-template-md",
 }
 
+# Collaborative Lesson Development Training (carpentries.github.io/lesson-development-training)
+# and The Carpentries Lab reviewer checklist (github.com/carpentries-lab/reviews) both call out
+# weak, unmeasurable objective verbs -- prefer "explain"/"choose"/"predict" over these.
+PASSIVE_OBJECTIVE_VERBS = (
+    "know",
+    "understand",
+    "appreciate",
+    "learn about",
+    "be familiar with",
+    "be aware of",
+    "grasp",
+)
+
+# Lab checklist: "does not make extensive use of contractions" (accessibility --
+# translation and ESL learners in particular).
+CONTRACTION_RE = re.compile(r"\b\w+'(t|s|re|ve|ll|d|m)\b", re.IGNORECASE)
+
+# Lab checklist + CLDT: "descriptive link text" -- avoid generic phrases that
+# say nothing out of context (screen readers, translation).
+GENERIC_LINK_TEXT = {"here", "click here", "this link", "link", "click", "this"}
+
 FRONT_MATTER_RE = re.compile(r"^---\n(.*?\n)---\n(.*)$", re.DOTALL)
 DIV_FENCE_RE = re.compile(r"^(:{3,})\s*\{?\.?([a-zA-Z-]*)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -170,6 +191,18 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 )
             )
 
+    if not (lesson_dir / "reference.md").exists():
+        findings.append(
+            Finding(
+                "info",
+                "config",
+                "no reference.md (glossary) found at the lesson root",
+                location="config.yaml",
+                hint="The Carpentries Lab reviewer checklist checks that no key terms are "
+                "missing from the lesson glossary.",
+            )
+        )
+
     return findings
 
 
@@ -207,7 +240,100 @@ def _check_front_matter(front_matter: dict, location: str) -> list[Finding]:
                     location=location,
                 )
             )
+
+    teaching, exercises = front_matter.get("teaching"), front_matter.get("exercises")
+    if isinstance(teaching, (int, float)) and isinstance(exercises, (int, float)):
+        total = teaching + exercises
+        if total < 20 or total > 60:
+            findings.append(
+                Finding(
+                    "info",
+                    "front-matter",
+                    f"episode is {total:g} min (teaching + exercises), outside the "
+                    "20-60 min range Collaborative Lesson Development Training suggests",
+                    location=location,
+                    hint="Not a hard rule -- but very short or very long episodes are "
+                    "worth a second look for scope.",
+                )
+            )
     return findings
+
+
+def _check_objective_verbs(body: str, location: str) -> list[Finding]:
+    """Flag objectives that open with a hard-to-assess verb (know/understand/...)
+    instead of an action verb (explain/choose/predict/...) -- see CLDT's SMART
+    objectives guidance and the Carpentries Lab reviewer checklist."""
+    findings = []
+    in_code = _code_fence_mask(body)
+    lines = body.splitlines()
+    depth = 0
+    in_objectives = False
+    objectives_depth = None
+
+    for i, line in enumerate(lines):
+        if in_code[i]:
+            continue
+        match = DIV_FENCE_RE.match(line.strip())
+        if match:
+            div_type = match.group(2).lower()
+            if div_type:
+                if div_type == "objectives" and depth == 0:
+                    in_objectives = True
+                    objectives_depth = depth
+                depth += 1
+            else:
+                depth -= 1
+                if in_objectives and depth == objectives_depth:
+                    in_objectives = False
+            continue
+
+        if not in_objectives:
+            continue
+        stripped = line.strip()
+        if not stripped.startswith(("-", "*")):
+            continue
+        bullet_text = stripped.lstrip("-* ").strip()
+        lower = bullet_text.lower()
+        for verb in PASSIVE_OBJECTIVE_VERBS:
+            if lower.startswith(verb):
+                findings.append(
+                    Finding(
+                        "warning",
+                        "objectives",
+                        f'objective starts with a hard-to-assess verb ("{verb}"): '
+                        f'"{bullet_text[:70]}"',
+                        location=location,
+                        hint="Prefer an action verb (explain, choose, predict, ...) -- "
+                        "it's hard to observe whether a learner has developed the skill "
+                        "otherwise.",
+                    )
+                )
+                break
+
+    return findings
+
+
+def _check_contractions(body: str, location: str) -> list[Finding]:
+    """The Carpentries Lab reviewer checklist flags heavy contraction use as an
+    accessibility concern for translation and ESL learners."""
+    in_code = _code_fence_mask(body)
+    count = sum(
+        len(CONTRACTION_RE.findall(line))
+        for i, line in enumerate(body.splitlines())
+        if not in_code[i]
+    )
+    if count >= 5:
+        return [
+            Finding(
+                "info",
+                "style",
+                f"{count} contractions found in this episode",
+                location=location,
+                hint="Consider spelling them out (don't -> do not) for translation and "
+                "ESL learners.",
+            )
+        ]
+    return []
 
 
 def _check_divs(body: str, location: str) -> list[Finding]:
@@ -359,7 +485,18 @@ def _check_links(body: str, lesson_dir: Path, location: str) -> list[Finding]:
                         )
                     )
 
-        for _, path in LINK_RE.findall(line):
+        for text, path in LINK_RE.findall(line):
+            if text.strip().lower() in GENERIC_LINK_TEXT:
+                findings.append(
+                    Finding(
+                        "warning",
+                        "links",
+                        f'generic link text "{text}" on line {lineno}',
+                        location=location,
+                        hint="Screen readers and translation tools lose context with "
+                        "generic link text like 'click here' -- describe the destination.",
+                    )
+                )
             if path.startswith(("http://", "https://", "#", "mailto:", "{{")):
                 continue
             # Sandpaper renders every .md source to a same-named .html page, so a
@@ -407,6 +544,8 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_divs(body, location))
     findings.extend(_check_headings(body, location))
     findings.extend(_check_links(body, lesson_dir, location))
+    findings.extend(_check_objective_verbs(body, location))
+    findings.extend(_check_contractions(body, location))
 
     in_code = _code_fence_mask(body)
     lines = body.splitlines()
