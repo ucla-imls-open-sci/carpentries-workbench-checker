@@ -241,14 +241,29 @@ def test_links_generic_link_text_is_warning(tmp_path):
 # -- objectives (CLDT / Carpentries Lab checklist) ---------------------------
 
 
-def test_objectives_passive_verb_is_warning():
+def test_objectives_vague_opener_is_warning():
     body = """\
 :::::: objectives
 - Understand how version control works.
 ::::::
 """
-    findings = _check_objective_verbs(body, "ep.md")
-    assert any("hard-to-assess verb" in f.message for f in findings)
+    findings, count = _check_objective_verbs(body, "ep.md")
+    assert any("hard to assess" in f.message for f in findings)
+    assert count == 1
+
+
+def test_objectives_vague_opener_word_boundary_no_false_positive():
+    # "Knowledgeable"/"Understanding-based" must not match "know"/"understand"
+    # as a bare prefix -- this was a real bug (no \b in the original regex).
+    body = """\
+:::::: objectives
+- Knowledgeable use of Git for version control.
+- Understanding-based approach to Git basics.
+::::::
+"""
+    findings, count = _check_objective_verbs(body, "ep.md")
+    assert findings == []
+    assert count == 2
 
 
 def test_objectives_action_verb_has_no_finding():
@@ -257,7 +272,9 @@ def test_objectives_action_verb_has_no_finding():
 - Explain how version control works.
 ::::::
 """
-    assert _check_objective_verbs(body, "ep.md") == []
+    findings, count = _check_objective_verbs(body, "ep.md")
+    assert findings == []
+    assert count == 1
 
 
 def test_objectives_verb_check_ignores_other_divs():
@@ -268,7 +285,24 @@ def test_objectives_verb_check_ignores_other_divs():
 - Understand this is just an aside.
 ::::::
 """
-    assert _check_objective_verbs(body, "ep.md") == []
+    findings, count = _check_objective_verbs(body, "ep.md")
+    assert findings == []
+    assert count == 0
+
+
+def test_objectives_more_than_four_is_info():
+    body = """\
+:::::: objectives
+- Explain A.
+- Explain B.
+- Explain C.
+- Explain D.
+- Explain E.
+::::::
+"""
+    findings, count = _check_objective_verbs(body, "ep.md")
+    assert count == 5
+    assert any("5 objectives" in f.message for f in findings)
 
 
 # -- style (contractions) ----------------------------------------------------
@@ -283,6 +317,59 @@ def test_contractions_above_threshold_is_info():
     body = "\n".join([f"Line {i}: don't do that, it's not right." for i in range(5)])
     findings = _check_contractions(body, "ep.md")
     assert findings and findings[0].severity == "info"
+
+
+def test_contractions_possessives_are_not_counted():
+    # Real bug: \w+'s matched possessives ("learner's", "Git's") as
+    # contractions. Repeat past the count threshold to isolate the fix.
+    body = "\n".join(
+        [f"Check the learner's laptop and Git's staging area, line {i}." for i in range(5)]
+    )
+    assert _check_contractions(body, "ep.md") == []
+
+
+def test_contractions_curly_apostrophe_is_counted():
+    body = "\n".join([f"Line {i}: don’t do that, it’s not right." for i in range(5)])
+    findings = _check_contractions(body, "ep.md")
+    assert findings and findings[0].severity == "info"
+
+
+# -- objectives assessed by exercises (Carpentries Lab checklist) -----------
+
+
+def test_objectives_with_zero_exercises_is_warning(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    path = lesson_dir / "episodes" / "01-intro.md"
+    path.write_text(
+        episode_text(
+            front_matter="title: 'Ep'\nteaching: 15\nexercises: 0",
+            body=VALID_EPISODE_BODY,
+        )
+    )
+    findings = check_episode(path, lesson_dir)
+    assert any("exercises: 0" in f.message for f in findings)
+
+
+def test_objectives_with_nonzero_exercises_is_silent(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    path = lesson_dir / "episodes" / "01-intro.md"
+    path.write_text(episode_text())  # default fixture has exercises: 15
+    findings = check_episode(path, lesson_dir)
+    assert not any("exercises: 0" in f.message for f in findings)
+
+
+# -- glossary path (Workbench convention) ------------------------------------
+
+
+def test_config_glossary_at_learners_path_is_recognized(tmp_path):
+    # Real bug: the check only looked at lesson_dir/reference.md, but
+    # Workbench's actual convention (confirmed against workbench-template-md
+    # and a real published lesson) is learners/reference.md.
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "learners").mkdir()
+    (lesson_dir / "learners" / "reference.md").write_text("# Reference\n")
+    findings = check_config(lesson_dir)
+    assert not any("glossary" in f.message for f in findings)
 
 
 # -- end to end -------------------------------------------------------------

@@ -46,24 +46,37 @@ CONFIG_PLACEHOLDER_VALUES = {
 
 # Collaborative Lesson Development Training (carpentries.github.io/lesson-development-training)
 # and The Carpentries Lab reviewer checklist (github.com/carpentries-lab/reviews) both call out
-# weak, unmeasurable objective verbs -- prefer "explain"/"choose"/"predict" over these.
-PASSIVE_OBJECTIVE_VERBS = (
-    "know",
-    "understand",
-    "appreciate",
-    "learn about",
-    "be familiar with",
-    "be aware of",
-    "grasp",
+# weak, unmeasurable objective verbs -- prefer "explain"/"choose"/"predict" over these. This is
+# a denylist of *openers*, not a verb classifier: a verb absent from this list is not thereby
+# "good", and a match here means "worth a second look", not "wrong" -- CLDT's actual test is
+# whether attainment is directly observable, not which word an objective happens to start with.
+VAGUE_OBJECTIVE_OPENER_RE = re.compile(
+    r"^(know|understand|appreciate|learn about|be familiar with|become familiar with|"
+    r"be aware of|grasp|(?:gain|develop) an understanding of)\b",
+    re.IGNORECASE,
 )
 
-# Lab checklist: "does not make extensive use of contractions" (accessibility --
-# translation and ESL learners in particular).
-CONTRACTION_RE = re.compile(r"\b\w+'(t|s|re|ve|ll|d|m)\b", re.IGNORECASE)
+# Contractions are a closed set (pronoun/auxiliary + 't/'s/'re/...), unlike possessives
+# (any noun + 's) -- matching \w+ before the apostrophe wrongly counts "learner's"/"Git's"
+# as contractions. ’ covers curly/smart apostrophes from copy-pasted prose.
+_CONTRACTION_STEMS = (
+    "don", "doesn", "didn", "won", "wouldn", "can", "couldn", "shouldn", "isn", "aren",
+    "wasn", "weren", "hasn", "haven", "hadn", "mustn", "needn", "shan",
+    "i", "you", "he", "she", "it", "we", "they", "who", "what", "that", "there", "here",
+    "let", "how", "where", "when", "why",
+)
+CONTRACTION_RE = re.compile(
+    r"\b(?:" + "|".join(_CONTRACTION_STEMS) + r")['’](?:t|s|re|ve|ll|d|m)\b",
+    re.IGNORECASE,
+)
+INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
 # Lab checklist + CLDT: "descriptive link text" -- avoid generic phrases that
 # say nothing out of context (screen readers, translation).
-GENERIC_LINK_TEXT = {"here", "click here", "this link", "link", "click", "this"}
+GENERIC_LINK_TEXT = {
+    "here", "click here", "this link", "link", "click", "this",
+    "this page", "read more", "learn more",
+}
 
 FRONT_MATTER_RE = re.compile(r"^---\n(.*?\n)---\n(.*)$", re.DOTALL)
 DIV_FENCE_RE = re.compile(r"^(:{3,})\s*\{?\.?([a-zA-Z-]*)")
@@ -191,15 +204,23 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 )
             )
 
-    if not (lesson_dir / "reference.md").exists():
+    # Workbench's actual convention is learners/reference.md (confirmed against
+    # both carpentries/workbench-template-md and a real published lesson) --
+    # accept a legacy root-level reference.md too, since older lessons may
+    # still have it there.
+    glossary_candidates = (
+        lesson_dir / "learners" / "reference.md",
+        lesson_dir / "reference.md",
+    )
+    if not any(p.exists() for p in glossary_candidates):
         findings.append(
             Finding(
                 "info",
                 "config",
-                "no reference.md (glossary) found at the lesson root",
+                "no glossary file found (learners/reference.md)",
                 location="config.yaml",
-                hint="The Carpentries Lab reviewer checklist checks that no key terms are "
-                "missing from the lesson glossary.",
+                hint="[Carpentries Lab] Checks that no key terms are missing from the "
+                "lesson glossary. This only checks the file exists, not its contents.",
             )
         )
 
@@ -252,23 +273,26 @@ def _check_front_matter(front_matter: dict, location: str) -> list[Finding]:
                     f"episode is {total:g} min (teaching + exercises), outside the "
                     "20-60 min range Collaborative Lesson Development Training suggests",
                     location=location,
-                    hint="Not a hard rule -- but very short or very long episodes are "
+                    hint="[CLDT] Not a hard rule -- but very short or very long episodes are "
                     "worth a second look for scope.",
                 )
             )
     return findings
 
 
-def _check_objective_verbs(body: str, location: str) -> list[Finding]:
-    """Flag objectives that open with a hard-to-assess verb (know/understand/...)
-    instead of an action verb (explain/choose/predict/...) -- see CLDT's SMART
-    objectives guidance and the Carpentries Lab reviewer checklist."""
+def _check_objective_verbs(body: str, location: str) -> tuple[list[Finding], int]:
+    """Flag objectives that open with a verb that's often hard to assess
+    (know/understand/...) instead of an action verb (explain/choose/predict/...)
+    -- see CLDT's SMART objectives guidance and the Carpentries Lab reviewer
+    checklist. Also returns the objective bullet count, reused by check_episode()
+    for the "2-4 objectives per episode" and "assessed by an exercise" checks."""
     findings = []
     in_code = _code_fence_mask(body)
     lines = body.splitlines()
     depth = 0
     in_objectives = False
     objectives_depth = None
+    objective_count = 0
 
     for i, line in enumerate(lines):
         if in_code[i]:
@@ -293,44 +317,67 @@ def _check_objective_verbs(body: str, location: str) -> list[Finding]:
         if not stripped.startswith(("-", "*")):
             continue
         bullet_text = stripped.lstrip("-* ").strip()
-        lower = bullet_text.lower()
-        for verb in PASSIVE_OBJECTIVE_VERBS:
-            if lower.startswith(verb):
-                findings.append(
-                    Finding(
-                        "warning",
-                        "objectives",
-                        f'objective starts with a hard-to-assess verb ("{verb}"): '
-                        f'"{bullet_text[:70]}"',
-                        location=location,
-                        hint="Prefer an action verb (explain, choose, predict, ...) -- "
-                        "it's hard to observe whether a learner has developed the skill "
-                        "otherwise.",
-                    )
+        objective_count += 1
+        verb_match = VAGUE_OBJECTIVE_OPENER_RE.match(bullet_text)
+        if verb_match:
+            findings.append(
+                Finding(
+                    "warning",
+                    "objectives",
+                    f'objective opens with a phrase that can be hard to assess '
+                    f'("{verb_match.group(1)}"): "{bullet_text[:70]}"',
+                    location=location,
+                    hint="[CLDT] Not a hard rule -- judge by whether attainment is directly "
+                    "observable, not just the opening word. An action verb (explain, "
+                    "choose, predict, ...) usually makes that easier to write.",
                 )
-                break
+            )
 
-    return findings
+    if objective_count > 4:
+        findings.append(
+            Finding(
+                "info",
+                "objectives",
+                f"{objective_count} objectives in this episode",
+                location=location,
+                hint="[CLDT] Aim for 2-4 objectives per episode; consider splitting into "
+                "multiple episodes if you need more.",
+            )
+        )
+
+    return findings, objective_count
 
 
 def _check_contractions(body: str, location: str) -> list[Finding]:
     """The Carpentries Lab reviewer checklist flags heavy contraction use as an
-    accessibility concern for translation and ESL learners."""
+    accessibility concern for translation and ESL learners. Contractions are a
+    closed set of stems (it's, don't, ...), unlike possessives (any noun + 's),
+    so CONTRACTION_RE only matches known stems -- and inline code spans are
+    stripped first so identifiers like `don't_do_this` don't get counted."""
     in_code = _code_fence_mask(body)
-    count = sum(
-        len(CONTRACTION_RE.findall(line))
-        for i, line in enumerate(body.splitlines())
-        if not in_code[i]
-    )
-    if count >= 5:
+    contraction_count = 0
+    word_count = 0
+    for i, line in enumerate(body.splitlines()):
+        if in_code[i]:
+            continue
+        prose = INLINE_CODE_RE.sub(" ", line)
+        contraction_count += len(CONTRACTION_RE.findall(prose))
+        word_count += len(prose.split())
+
+    if word_count == 0:
+        return []
+    rate_per_1000 = contraction_count / word_count * 1000
+    if contraction_count >= 5 and rate_per_1000 >= 5:
         return [
             Finding(
                 "info",
                 "style",
-                f"{count} contractions found in this episode",
+                f"{contraction_count} contractions found ({rate_per_1000:.1f} per 1,000 "
+                "words)",
                 location=location,
-                hint="Consider spelling them out (don't -> do not) for translation and "
-                "ESL learners.",
+                hint="[Carpentries Lab] Consider spelling them out (don't -> do not) for "
+                "translation and ESL learners. This threshold is a local heuristic, not "
+                "an official Carpentries rule.",
             )
         ]
     return []
@@ -493,8 +540,9 @@ def _check_links(body: str, lesson_dir: Path, location: str) -> list[Finding]:
                         "links",
                         f'generic link text "{text}" on line {lineno}',
                         location=location,
-                        hint="Screen readers and translation tools lose context with "
-                        "generic link text like 'click here' -- describe the destination.",
+                        hint="[CLDT/Carpentries Lab] Screen readers and translation tools "
+                        "lose context with generic link text like 'click here' -- "
+                        "describe the destination.",
                     )
                 )
             if path.startswith(("http://", "https://", "#", "mailto:", "{{")):
@@ -544,8 +592,24 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_divs(body, location))
     findings.extend(_check_headings(body, location))
     findings.extend(_check_links(body, lesson_dir, location))
-    findings.extend(_check_objective_verbs(body, location))
+    objective_findings, objective_count = _check_objective_verbs(body, location)
+    findings.extend(objective_findings)
     findings.extend(_check_contractions(body, location))
+
+    # [Carpentries Lab]: "All lesson and episode objectives are assessed by
+    # exercises or another opportunity for formative assessment."
+    if objective_count > 0 and front_matter.get("exercises") == 0:
+        findings.append(
+            Finding(
+                "warning",
+                "objectives",
+                f"{objective_count} objective(s) declared but exercises: 0 -- nothing "
+                "in this episode formally assesses them",
+                location=location,
+                hint="[Carpentries Lab] Consider adding a challenge, discussion, or "
+                "other formative-assessment checkpoint.",
+            )
+        )
 
     in_code = _code_fence_mask(body)
     lines = body.splitlines()
