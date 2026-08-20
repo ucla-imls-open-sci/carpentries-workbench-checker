@@ -22,7 +22,14 @@ def _resolve_target(target: str) -> tuple[Path, tempfile.TemporaryDirectory | No
     if target.startswith(("http://", "https://", "git@")):
         tmp = tempfile.TemporaryDirectory(prefix="imls-tools-")
         dest = Path(tmp.name) / "lesson"
-        subprocess.run(["git", "clone", "--quiet", "--depth", "1", target, str(dest)], check=True)
+        result = subprocess.run(
+            ["git", "clone", "--quiet", "--depth", "1", target, str(dest)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            tmp.cleanup()
+            raise SystemExit(f"failed to clone {target}: {result.stderr.strip()}")
         return dest, tmp
     path = Path(target).expanduser().resolve()
     if not path.exists():
@@ -83,23 +90,30 @@ def main(argv: list[str] | None = None) -> int:
         if args.html:
             md_text = render_markdown(findings, title)
             out_path = Path(args.output).with_suffix(".html") if args.output else Path("report.html")
-            rendered = render_html_via_quarto(md_text, out_path)
-            if rendered is None:
-                print(
-                    "quarto not found on PATH -- skipping HTML render "
-                    "(install from https://quarto.org, or use --format markdown)",
-                    file=sys.stderr,
-                )
+            try:
+                rendered = render_html_via_quarto(md_text, out_path)
+            except RuntimeError as exc:
+                print(f"quarto render failed, skipping HTML output: {exc}", file=sys.stderr)
             else:
-                print(f"wrote {rendered}", file=sys.stderr)
+                if rendered is None:
+                    print(
+                        "quarto not found on PATH -- skipping HTML render "
+                        "(install from https://quarto.org, or use --format markdown)",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(f"wrote {rendered}", file=sys.stderr)
 
         if args.ai:
             episodes_dir = lesson_dir / "episodes"
-            episode_files = sorted(p for p in episodes_dir.glob("*.md"))
+            episode_files = sorted(
+                p for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd")
+            )
             if args.episode:
                 episode_files = [p for p in episode_files if p.name == args.episode]
             for path in episode_files:
-                episode_findings = [f for f in findings if f.location == path.name]
+                relative_location = str(path.relative_to(lesson_dir))
+                episode_findings = [f for f in findings if f.location == relative_location]
                 print(f"\n--- AI review: {path.name} ({args.backend}) ---")
                 review = review_episode(
                     path.read_text(),

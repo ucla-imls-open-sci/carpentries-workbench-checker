@@ -11,6 +11,9 @@ license-file = "LICENSE"
 # Run the checker: pixi run check <path-or-git-url> [--ai] [--backend ollama|claude|codex] ...
 check = "python -m checker.cli"
 
+# Run the test suite (mechanical checks only -- no network, no models needed).
+test = "pytest tests/ -v"
+
 # Pull the recommended local models (sized for a 16GB M2 Mac -- see README).
 pull-models = "ollama pull nomic-embed-text && ollama pull qwen3.5:9b-q4_K_M"
 pull-models-small = "ollama pull nomic-embed-text && ollama pull qwen3.5:4b"
@@ -34,3 +37,4 @@ tiktoken = ">=0.14.0, <0.15"
 anthropic = ">=0.125.0, <0.126"
 pyyaml = ">=6.0.3, <7"
 langchain-chroma = ">=1.1.0, <2"
+pytest = ">=9.1.1, <10"

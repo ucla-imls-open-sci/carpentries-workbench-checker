@@ -126,6 +126,19 @@ throughput long before you run out of RAM outright.
 | `headings` | First heading is `##`, no `#`, no duplicate headings | `pegboard::validate_headings()` |
 | `links` | Missing alt text, broken internal links/images (including `episodes/fig/`-relative images and `.html`→`.md` resolution) | `pegboard::validate_links()` |
 
+Div and heading checks skip content inside fenced code blocks (```` ``` ````/`~~~`) — a lesson that teaches Markdown, Workbench syntax, or shell `#` comments will contain literal `:::`/`#` text that isn't a real div or heading.
+
+## Testing
+
+```bash
+pixi run test
+```
+
+Unit tests cover the mechanical checks only (`checker/lesson_check.py`) — no
+network access or local models needed. The AI review layer isn't covered by
+automated tests since it calls out to live models; it's been manually
+smoke-tested against a real public lesson for all three backends.
+
 ## Migrating from the old scripts
 
 This replaces `content-checker/` (`content_check.py`, `content_check_cli.py`,
