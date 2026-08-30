@@ -1,2 +1,28 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120  # existing hint/error strings are prose, not code; 88 would
+                    # force ugly mid-sentence wraps for no real readability gain
+extend-exclude = ["proposal_analysis.ipynb"]  # unrelated exploratory notebook, not part of the checker package
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports/vars, undefined names, ...)
+    "I",    # isort (import order/grouping)
+    "UP",   # pyupgrade (drop needless legacy-Python patterns)
+    "D1",   # pydocstyle: missing docstrings on public modules/classes/functions
+]
+ignore = [
+    "D107",  # __init__ docstring -- this codebase has no classes needing one
+]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest convention: the test name documents intent, a docstring on every
+# test_* function is noise, not signal.
+"tests/*.py" = ["D1"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"

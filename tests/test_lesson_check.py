@@ -148,6 +148,23 @@ def test_divs_valid_body_has_no_findings():
     assert _check_divs(VALID_EPISODE_BODY, "ep.md") == []
 
 
+def test_divs_caution_is_a_known_type():
+    # Real bug found auditing research-software-citable-discoverable: caution
+    # is a documented Workbench div type (raises awareness of a potential
+    # issue/problem, per the Component Guide), was missing from
+    # KNOWN_DIV_TYPES and got flagged as unrecognized 5 times across 3 real
+    # episodes.
+    body = VALID_EPISODE_BODY + "\n:::: caution\nWatch out for this.\n::::\n"
+    findings = _check_divs(body, "ep.md")
+    assert not any("unrecognized div type" in f.message for f in findings)
+
+
+def test_divs_genuinely_unknown_type_is_still_flagged():
+    body = VALID_EPISODE_BODY + "\n:::: not-a-real-type\ntext\n::::\n"
+    findings = _check_divs(body, "ep.md")
+    assert any("unrecognized div type" in f.message for f in findings)
+
+
 def test_divs_unclosed_is_error():
     body = ":::: challenge\nNo closing fence.\n"
     findings = _check_divs(body, "ep.md")

@@ -266,7 +266,11 @@ def _check_with_codex(prompt: str, model: str | None) -> str:
             "check `codex login` / network access, then retry"
         ) from exc
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "(no output -- check `codex exec \"hello\"` runs standalone)"
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or '(no output -- check `codex exec "hello"` runs standalone)'
+        )
         raise RuntimeError(f"codex exec failed ({result.returncode}): {detail}")
     return result.stdout.strip()
 
@@ -286,6 +290,8 @@ def review_episode(
     embed_model: str = EMBED_MODEL,
     glossary_text: str = "",
 ) -> str:
+    """Build the review prompt (style-guide retrieval + CLDT/Lab checklist +
+    mechanical findings + glossary) and run it against the chosen backend."""
     if backend not in BACKENDS:
         raise ValueError(f"unknown backend `{backend}`, expected one of {sorted(BACKENDS)}")
     resolved_model = model or DEFAULT_MODELS[backend]

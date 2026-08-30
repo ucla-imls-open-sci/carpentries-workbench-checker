@@ -119,6 +119,9 @@ def _blame_map(lesson_dir: Path, findings: list) -> dict[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: parse args, run checks, render/write the report,
+    optionally run the AI review. Returns 1 if any error-level finding was
+    reported, 0 otherwise."""
     parser = argparse.ArgumentParser(description="Carpentries Workbench lesson checker")
     parser.add_argument("target", help="local lesson directory, or a git URL to clone and check")
     parser.add_argument("--episode", help="only check this one episode file (by filename)")
