@@ -14,7 +14,11 @@ import tempfile
 from pathlib import Path
 
 from checker.ai_review import BACKENDS, review_episode
-from checker.lesson_check import SUPPORT_FILE_CHECKS, run_checks
+from checker.lesson_check import (
+    GLOSSARY_PLACEHOLDER_FINGERPRINT,
+    resolve_glossary_path,
+    run_checks,
+)
 from checker.report import render_html_via_quarto, render_json, render_markdown, render_terminal
 
 
@@ -46,40 +50,71 @@ def _write_or_print(text: str, output: str | None):
 
 
 def _read_glossary(lesson_dir: Path) -> str:
-    """The lesson's learners/reference.md, empty string if missing or still
-    the sandpaper scaffold placeholder -- feeding placeholder text to the AI
+    """The lesson's glossary content (learners/reference.md, or the legacy
+    root-level reference.md, via the same resolver check_config()/
+    check_support_files() use), empty string if missing or still the
+    sandpaper scaffold placeholder -- feeding placeholder text to the AI
     review as if it were "the current glossary" would make it think existing
-    terms are covered when nothing has actually been written yet."""
-    path = lesson_dir / "learners" / "reference.md"
-    if not path.exists():
+    terms are covered when nothing has actually been written yet. Using the
+    same resolver as the other glossary checks matters: a legacy-path lesson
+    with a real glossary must not read as empty here just because this
+    function checked a different path than the one that actually exists."""
+    glossary_path = resolve_glossary_path(lesson_dir)
+    if glossary_path is None:
         return ""
-    text = path.read_text(errors="replace")
-    fingerprint, _hint = SUPPORT_FILE_CHECKS["learners/reference.md"]
-    if fingerprint in text.lower():
+    text = (lesson_dir / glossary_path).read_text(errors="replace")
+    if GLOSSARY_PLACEHOLDER_FINGERPRINT in text.lower():
         return ""
     return text
 
 
+_BLAME_TIMEOUT_SECONDS = 5
+_BLAME_FIELD_SEP = "\x1f"  # ASCII unit separator -- won't collide with real author names
+
+
 def _blame_map(lesson_dir: Path, findings: list) -> dict[str, str]:
-    """Last author to touch each finding's file, via `git log -1 --format=%an`.
+    """Last author to change each finding's file, via `git log -1`.
 
     Turns a flat findings report into something closer to what filing GitHub
-    issues per-owner needs: who to assign each file's fixes to. Best-effort --
-    a lesson_dir that isn't a git repo (or a `git log` failure on one file)
-    just means that location gets no author suffix, not a crash.
+    issues per-owner needs: who to assign each file's fixes to. This is a
+    routing hint (most recent activity), not an ownership claim -- a small
+    formatting fix from someone who isn't the file's primary author still
+    "wins" here, which is fine for "who'd remember this file's current
+    state" but wrong for "who wrote most of it." Best-effort: a lesson_dir
+    that isn't a git repo, a `git log` failure or timeout on one file, or
+    a file with no commit history just means that location gets no
+    annotation, not a crash.
+
+    Uses `%aN` (author name, `.mailmap`-canonicalized) rather than `%an`
+    (raw commit author), so the same person committing under different
+    names/emails still attributes consistently.
     """
     locations = sorted({f.location for f in findings if f.location})
     blame: dict[str, str] = {}
     for location in locations:
-        result = subprocess.run(
-            ["git", "log", "-1", "--format=%an", "--", location],
-            cwd=lesson_dir,
-            capture_output=True,
-            text=True,
-        )
-        author = result.stdout.strip()
-        if result.returncode == 0 and author:
-            blame[location] = author
+        try:
+            result = subprocess.run(
+                [
+                    "git", "log", "-1",
+                    f"--format=%aN{_BLAME_FIELD_SEP}%ad{_BLAME_FIELD_SEP}%h",
+                    "--date=short",
+                    "--", location,
+                ],
+                cwd=lesson_dir,
+                capture_output=True,
+                text=True,
+                timeout=_BLAME_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        parts = result.stdout.strip().split(_BLAME_FIELD_SEP)
+        if len(parts) != 3:
+            continue
+        author, date, short_sha = parts
+        if author:
+            blame[location] = f"{author}, {date}, {short_sha}"
     return blame
 
 
@@ -94,7 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--blame",
         action="store_true",
-        help="annotate each file's findings with its last-touching author (git log -1), "
+        help="annotate each file's findings with who last changed it, date, and short "
+        "SHA (git log -1), "
         "useful for splitting a report into per-owner follow-up issues; requires "
         "lesson_dir to be a git repo, silently skipped otherwise",
     )
