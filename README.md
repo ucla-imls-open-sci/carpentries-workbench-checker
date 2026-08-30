@@ -20,9 +20,12 @@ the same rules locally, in under a second, with no dependencies beyond
 Python: required front matter (`title`, `teaching`, `exercises`), the three
 required top-level blocks (`questions`, `objectives`, `keypoints`), balanced
 and recognized `:::` div types, heading rules (start at `##`, no `#`, no
-duplicates), and broken internal links/images (including the
+duplicates), broken internal links/images (including the
 `episodes/fig/`-relative image convention Workbench actually uses, and the
-fact that `.html` links point at rendered `.md` sources, not literal files).
+fact that `.html` links point at rendered `.md` sources, not literal files),
+and whether an episode (or `learners/setup.md`, `instructors/instructor-notes.md`,
+`profiles/learner-profiles.md`) is still the unedited scaffold Sandpaper
+generated, structurally complete but never actually written.
 
 None of that requires a model. The AI layer (`checker/ai_review.py`) is for
 the part a deterministic checker can't do: whether a challenge is
@@ -120,13 +123,14 @@ throughput long before you run out of RAM outright.
 
 | Category | What we check | Mirrors |
 |---|---|---|
-| `config` | Placeholder values left unfilled, `created` date, episode list vs. files on disk | `sandpaper::validate_lesson()` |
+| `config` | Placeholder values left unfilled, `created` date, episode list vs. files on disk, episode files under `episodes/` with no `.md`/`.Rmd` extension (invisible to both Sandpaper and this checker's own glob otherwise) | `sandpaper::validate_lesson()` |
 | `front-matter` | `title` / `teaching` / `exercises` present and numeric, episode length (`teaching`+`exercises`) roughly 20–60 min | `sandpaper::validate_lesson()`, [CLDT episode scope guidance](https://carpentries.github.io/lesson-development-training/aio.html) |
 | `divs` | Required `questions`/`objectives`/`keypoints`, balanced `:::` fences, recognized div types, challenge/solution counts | `pegboard::validate_divs()` |
 | `headings` | First heading is `##`, no `#`, no duplicate headings | `pegboard::validate_headings()` |
 | `links` | Missing alt text, broken internal links/images (including `episodes/fig/`-relative images and `.html`→`.md` resolution), generic link text (`"click here"`) | `pegboard::validate_links()`, [Carpentries Lab reviewer checklist](https://github.com/carpentries-lab/reviews/blob/main/docs/reviewer_guide.md) |
 | `objectives` | Weak/unmeasurable objective verbs (`know`, `understand`, `appreciate`, ...) vs. action verbs (`explain`, `choose`, `predict`, ...) | CLDT's SMART objectives guidance |
 | `style` | Heavy contraction use | Carpentries Lab reviewer checklist (accessibility, translation/ESL learners) |
+| `boilerplate` | Unedited `sandpaper::create_lesson()` scaffold left in place: an episode's title or body still the generated default, or a `questions`/`objectives`/`keypoints` block that exists but only holds placeholder bullets (`keypoint1`, `Put questions here`, ...); same idea applied to `learners/setup.md`, `learners/reference.md`, `instructors/instructor-notes.md`, `profiles/learner-profiles.md`, which the checks above never look at since they aren't episodes | CLDT, a structurally-complete episode (passes every check above) can still be entirely unwritten, this is the gap between "the required blocks exist" and "someone wrote the lesson" |
 | `config` | *(also)* missing lesson glossary (`reference.md`) | Carpentries Lab reviewer checklist |
 
 Div and heading checks skip content inside fenced code blocks (```` ``` ````/`~~~`) — a lesson that teaches Markdown, Workbench syntax, or shell `#` comments will contain literal `:::`/`#` text that isn't a real div or heading.
