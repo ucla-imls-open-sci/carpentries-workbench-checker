@@ -65,6 +65,12 @@ pixi run check ./my-lesson --episode 03-sharing.md
 
 # Machine-readable, e.g. for a CI step of your own
 pixi run check ./my-lesson --format json
+
+# Annotate each file's findings with who last touched it (git log -1) --
+# turns the markdown report into something you can split straight into
+# per-owner follow-up issues. Requires my-lesson to be a git repo; silently
+# skipped (no annotations, no error) otherwise.
+pixi run check ./my-lesson --format markdown --blame --output report.md
 ```
 
 Exit code is `1` if any error-level finding was reported, `0` otherwise —
@@ -85,6 +91,16 @@ All three backends use the same local Ollama embedding model
 (`nomic-embed-text`) to retrieve relevant style-guide passages — that part
 never leaves your machine or costs anything, regardless of which backend
 answers the actual question.
+
+Alongside objectives/assessment/audience-fit/scope/tone, the review also
+grades a sixth criterion: **glossary gaps**. It reads the lesson's
+`learners/reference.md` (treating it as empty if it's still the
+`sandpaper::create_lesson()` placeholder, so an unwritten glossary doesn't
+get mistaken for "nothing's missing") and lists terms of art, acronyms, or
+domain-specific jargon the episode uses but doesn't define, each with a
+one-sentence draft definition scoped to how *this* lesson actually uses the
+term. Skips anything the episode already explains inline, and anything
+already covered (even loosely) in the existing glossary.
 
 | Backend | What it needs | Notes |
 |---|---|---|
