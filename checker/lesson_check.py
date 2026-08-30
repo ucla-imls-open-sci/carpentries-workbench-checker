@@ -28,6 +28,7 @@ KNOWN_DIV_TYPES = {
     "solution",
     "discussion",
     "callout",
+    "caution",  # raises awareness of a potential issue/problem, per the Workbench Component Guide
     "testimonial",
     "instructor",
     "spoiler",
