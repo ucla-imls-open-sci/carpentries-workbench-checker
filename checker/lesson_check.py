@@ -74,16 +74,81 @@ PLACEHOLDER_BULLET_TEXTS = {
     "put keypoints here",
 }
 
+# Beyond the exact-string set above: a small grammar for the placeholder
+# *shapes* authors actually leave behind (found via external validation
+# against real bullet text, not just the exact strings from one scaffold).
+# Deliberately conservative -- legitimate bullets can be short ("Use Git."),
+# so TBD/TODO/FIXME only match as an opener (a real bullet never starts with
+# one), while N/A/none require the bullet to be *only* that word, since
+# "None of these licenses..." is a real sentence, not a placeholder.
+PLACEHOLDER_GRAMMAR_RE = re.compile(
+    r"""^(?:
+        (?:tbd|todo|fixme)\b[:.]?\s*.*   # opener, e.g. "TODO", "TODO: add content"
+        |n/?a                             # whole bullet only: "N/A" or "NA"
+        |none                             # whole bullet only
+        |[.?!…-]{2,}                 # punctuation-only, e.g. "...", "???"
+        |x{2,}                            # "xxx"-style stand-in text
+        |[\[<].*[\]>]                     # bracketed instruction, e.g. "[add objective]"
+    )$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Strips wrapping markdown emphasis/inline-code (**bold**, _em_, `code`) and a
+# single trailing sentence-ending punctuation mark before placeholder
+# comparison, so "**Keypoint 1**" and "TODO." aren't missed just because the
+# exact string doesn't literally match.
+_MD_EMPHASIS_RE = re.compile(r"^[*_`]+|[*_`]+$")
+_TRAILING_END_PUNCT_RE = re.compile(r"[.!]$")
+# Bullet markers this checker recognizes: -, *, +, or an ordered "1." / "1)".
+_BULLET_MARKER_RE = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
+
+
+def _normalize_bullet_text(raw: str) -> str:
+    text = _MD_EMPHASIS_RE.sub("", raw.strip()).strip()
+    text = _TRAILING_END_PUNCT_RE.sub("", text).strip()
+    return text
+
+
+def _is_placeholder_bullet(normalized_lower: str) -> bool:
+    return normalized_lower in PLACEHOLDER_BULLET_TEXTS or bool(
+        PLACEHOLDER_GRAMMAR_RE.match(normalized_lower)
+    )
+
+# Workbench's actual convention is learners/reference.md (confirmed against
+# both carpentries/workbench-template-md and a real published lesson) -- but
+# older lessons may still have a legacy root-level reference.md. One shared
+# resolver, used by the glossary-existence check, the glossary-content check,
+# and the AI review's glossary reader, so all three agree on which file is
+# "the glossary" instead of each hardcoding its own answer (a real bug: the
+# content/AI-reader checks used to only look at the modern path, so a legacy
+# lesson's real glossary would read as "missing" to the AI review even
+# though the existence check correctly found it).
+GLOSSARY_CANDIDATE_PATHS = ("learners/reference.md", "reference.md")
+
+
+def resolve_glossary_path(lesson_dir: Path) -> str | None:
+    """The first existing glossary candidate path (repo-relative, forward
+    slashes), preferring the modern learners/reference.md, or None if
+    neither exists."""
+    for rel_path in GLOSSARY_CANDIDATE_PATHS:
+        if (lesson_dir / rel_path).exists():
+            return rel_path
+    return None
+
+
+GLOSSARY_PLACEHOLDER_FINGERPRINT = "this is a placeholder file"
+GLOSSARY_HINT = (
+    "[Carpentries Lab] 'No key terms are missing from the lesson glossary' is part of "
+    "the reviewer checklist. Port over the terms your episodes actually use."
+)
+
 # Scaffold text in learners/instructors/profiles files -- these aren't
 # episodes, so check_episode() never sees them, and check_config() only
-# checks that learners/reference.md *exists*. A CLDT-produced repo commonly
-# has all of these still at their generated defaults.
+# checks that a glossary file *exists*. A CLDT-produced repo commonly has
+# all of these still at their generated defaults. The glossary itself is
+# handled separately (see resolve_glossary_path above), since it alone needs
+# candidate-path resolution.
 SUPPORT_FILE_CHECKS = {
-    "learners/reference.md": (
-        "this is a placeholder file",
-        "[Carpentries Lab] 'No key terms are missing from the lesson glossary' is part of "
-        "the reviewer checklist. Port over the terms your episodes actually use.",
-    ),
     "learners/setup.md": (
         "fixme: setup instructions live in this document",
         "[CLDT] Covered in the 'Preparing to Teach' episode's Setup Instructions exercise. "
@@ -290,15 +355,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 )
             )
 
-    # Workbench's actual convention is learners/reference.md (confirmed against
-    # both carpentries/workbench-template-md and a real published lesson) --
-    # accept a legacy root-level reference.md too, since older lessons may
-    # still have it there.
-    glossary_candidates = (
-        lesson_dir / "learners" / "reference.md",
-        lesson_dir / "reference.md",
-    )
-    if not any(p.exists() for p in glossary_candidates):
+    if resolve_glossary_path(lesson_dir) is None:
         findings.append(
             Finding(
                 "info",
@@ -333,6 +390,20 @@ def check_support_files(lesson_dir: Path) -> list[Finding]:
                     f"{rel_path} is still the scaffold placeholder, not written yet",
                     location=rel_path,
                     hint=hint,
+                )
+            )
+
+    glossary_path = resolve_glossary_path(lesson_dir)
+    if glossary_path is not None:
+        full_path = lesson_dir / glossary_path
+        if GLOSSARY_PLACEHOLDER_FINGERPRINT in full_path.read_text(errors="replace").lower():
+            findings.append(
+                Finding(
+                    "warning",
+                    "boilerplate",
+                    f"{glossary_path} is still the scaffold placeholder, not written yet",
+                    location=glossary_path,
+                    hint=GLOSSARY_HINT,
                 )
             )
     return findings
@@ -476,13 +547,23 @@ def _check_objective_verbs(body: str, location: str) -> tuple[list[Finding], int
     return findings, objective_count
 
 
-def _check_boilerplate(front_matter: dict, body: str, location: str) -> list[Finding]:
+def _check_boilerplate(
+    front_matter: dict, body: str, location: str, line_offset: int = 0
+) -> list[Finding]:
     """Flag unedited `sandpaper::create_lesson()` scaffold content. The three
     required blocks all being present (so `_check_divs` is silent) says
     nothing about whether anyone has actually written the episode yet -- a
     CLDT cohort under time pressure regularly ships the scaffold's own worked
     example untouched. Exact substring match on purpose, to avoid flagging
-    real content that happens to share incidental wording."""
+    real content that happens to share incidental wording.
+
+    Fingerprints are sourced from `sandpaper::create_lesson()`'s generated
+    episode as of the Workbench version in use during the CLDT audit that
+    motivated this check (2026-08). If Carpentries changes the scaffold's
+    wording upstream, these will stop matching new lessons silently, no
+    error, just quietly reduced recall, worth re-diffing against a freshly
+    generated lesson occasionally rather than assuming these stay accurate
+    forever."""
     findings = []
     title = str(front_matter.get("title") or "").strip().lower()
     if title == SCAFFOLD_EPISODE_TITLE:
@@ -500,12 +581,15 @@ def _check_boilerplate(front_matter: dict, body: str, location: str) -> list[Fin
 
     body_lower = body.lower()
     for fingerprint in SCAFFOLD_BODY_FINGERPRINTS:
-        if fingerprint in body_lower:
+        match_index = body_lower.find(fingerprint)
+        if match_index != -1:
+            lineno = body.count("\n", 0, match_index) + 1 + line_offset
             findings.append(
                 Finding(
                     "warning",
                     "boilerplate",
-                    f'body still contains scaffold example text: "{fingerprint}"',
+                    f'body still contains scaffold example text on line {lineno}: '
+                    f'"{fingerprint}"',
                     location=location,
                     hint="[CLDT] This looks like unedited Carpentries Workbench scaffold "
                     "content, not real lesson material. Replace it, or delete the episode "
@@ -548,15 +632,17 @@ def _check_placeholder_bullets(body: str, location: str) -> list[Finding]:
         if tracked_type is None:
             continue
         stripped = line.strip()
-        if not stripped.startswith(("-", "*")):
+        marker_match = _BULLET_MARKER_RE.match(stripped)
+        if not marker_match:
             continue
-        bullet_text = stripped.lstrip("-* ").strip().lower()
-        if bullet_text in PLACEHOLDER_BULLET_TEXTS:
+        bullet_raw = stripped[marker_match.end():].strip()
+        normalized = _normalize_bullet_text(bullet_raw)
+        if _is_placeholder_bullet(normalized.lower()):
             findings.append(
                 Finding(
                     "error",
                     "boilerplate",
-                    f'`{tracked_type}` still has placeholder bullet text: "{stripped.lstrip("-* ").strip()}"',
+                    f'`{tracked_type}` still has placeholder bullet text: "{bullet_raw}"',
                     location=location,
                     hint="[CLDT] Replace with real content, this is scaffold placeholder "
                     "text, not a written keypoint/objective/question.",
@@ -842,7 +928,7 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_divs(body, location, line_offset))
     findings.extend(_check_headings(body, location, line_offset))
     findings.extend(_check_links(body, lesson_dir, location, line_offset))
-    findings.extend(_check_boilerplate(front_matter, body, location))
+    findings.extend(_check_boilerplate(front_matter, body, location, line_offset))
     findings.extend(_check_placeholder_bullets(body, location))
     objective_findings, objective_count = _check_objective_verbs(body, location)
     findings.extend(objective_findings)

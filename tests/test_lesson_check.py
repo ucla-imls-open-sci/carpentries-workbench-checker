@@ -23,6 +23,7 @@ from checker.lesson_check import (
     check_config,
     check_episode,
     check_support_files,
+    resolve_glossary_path,
 )
 
 VALID_EPISODE_BODY = """\
@@ -414,6 +415,18 @@ def test_boilerplate_scaffold_body_fingerprint_is_warning():
     assert any(f.severity == "warning" and "scaffold example text" in f.message for f in findings)
 
 
+def test_boilerplate_body_fingerprint_reports_real_line_number():
+    body = 'Line 1.\nLine 2.\nLine 3.\nBuoyant Barnacle repository.\n'
+    findings = _check_boilerplate({"title": "Real Title"}, body, "ep.md")
+    assert any("line 4" in f.message for f in findings)
+
+
+def test_boilerplate_body_fingerprint_line_offset_is_applied():
+    body = 'Buoyant Barnacle repository.\n'
+    findings = _check_boilerplate({"title": "Real Title"}, body, "ep.md", line_offset=10)
+    assert any("line 11" in f.message for f in findings)
+
+
 def test_boilerplate_real_body_is_silent():
     findings = _check_boilerplate(
         {"title": "Real Title"}, "This episode explains real licensing content.", "ep.md"
@@ -454,6 +467,56 @@ def test_placeholder_bullets_only_checked_inside_required_blocks():
     assert _check_placeholder_bullets(body, "ep.md") == []
 
 
+def test_placeholder_bullets_grammar_variants_are_flagged():
+    # From external validation: TBD/TODO/FIXME, N/A/none, punctuation-only,
+    # and bracketed instructions are all real placeholder shapes seen in
+    # practice, not just the exact scaffold strings.
+    body = """\
+:::::: keypoints
+- TODO
+- N/A
+- ...
+- [add keypoint]
+::::::
+"""
+    findings = _check_placeholder_bullets(body, "ep.md")
+    assert len(findings) == 4
+
+
+def test_placeholder_bullets_markdown_emphasis_is_normalized():
+    # "**Keypoint 1**" must still match "keypoint 1" -- wrapping emphasis
+    # markers shouldn't let placeholder text evade detection.
+    body = """\
+:::::: keypoints
+- **Keypoint 1**
+::::::
+"""
+    findings = _check_placeholder_bullets(body, "ep.md")
+    assert len(findings) == 1
+
+
+def test_placeholder_bullets_none_as_whole_sentence_is_not_flagged():
+    # "None" alone is a placeholder; "None of these licenses..." is a real
+    # sentence and must not be flagged just because it starts with "none".
+    body = """\
+:::::: keypoints
+- None of these licenses require attribution.
+::::::
+"""
+    assert _check_placeholder_bullets(body, "ep.md") == []
+
+
+def test_placeholder_bullets_plus_and_numbered_markers_are_recognized():
+    body = """\
+:::::: keypoints
++ TODO
+1. FIXME
+::::::
+"""
+    findings = _check_placeholder_bullets(body, "ep.md")
+    assert len(findings) == 2
+
+
 # -- extension-less episode files (CLDT: catch invisible-to-the-build files) -
 
 
@@ -474,6 +537,25 @@ def test_config_fig_and_data_dirs_are_not_flagged(tmp_path):
     (lesson_dir / "episodes" / "fig" / "diagram.png").write_bytes(b"")
     findings = check_config(lesson_dir)
     assert not any("no .md/.Rmd extension" in f.message for f in findings)
+
+
+# -- glossary path resolution (CLDT: one resolver, three consumers agree) ---
+
+
+def test_resolve_glossary_path_prefers_modern_path(tmp_path):
+    (tmp_path / "learners").mkdir()
+    (tmp_path / "learners" / "reference.md").write_text("# Reference\n")
+    (tmp_path / "reference.md").write_text("# Legacy\n")
+    assert resolve_glossary_path(tmp_path) == "learners/reference.md"
+
+
+def test_resolve_glossary_path_falls_back_to_legacy(tmp_path):
+    (tmp_path / "reference.md").write_text("# Legacy\n")
+    assert resolve_glossary_path(tmp_path) == "reference.md"
+
+
+def test_resolve_glossary_path_none_when_neither_exists(tmp_path):
+    assert resolve_glossary_path(tmp_path) is None
 
 
 # -- support files: learners/, instructors/, profiles/ content --------------
@@ -497,6 +579,26 @@ def test_support_files_real_reference_is_silent(tmp_path):
     (lesson_dir / "learners").mkdir()
     (lesson_dir / "learners" / "reference.md").write_text(
         "---\ntitle: 'Reference'\n---\n\n## Glossary\n\nPermissive license\n: Allows reuse with minimal restriction.\n"
+    )
+    assert check_support_files(lesson_dir) == []
+
+
+def test_support_files_legacy_root_glossary_placeholder_is_flagged(tmp_path):
+    # Real bug fixed via the shared resolve_glossary_path(): check_support_files
+    # used to only ever look at learners/reference.md, so a legacy-layout
+    # lesson's still-placeholder root-level reference.md went unchecked.
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "reference.md").write_text(
+        "# Reference\n\nThis is a placeholder file. Please add content here.\n"
+    )
+    findings = check_support_files(lesson_dir)
+    assert any(f.location == "reference.md" for f in findings)
+
+
+def test_support_files_legacy_root_glossary_real_content_is_silent(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "reference.md").write_text(
+        "# Reference\n\nCopyleft\n: Requires derivative works stay open.\n"
     )
     assert check_support_files(lesson_dir) == []
 

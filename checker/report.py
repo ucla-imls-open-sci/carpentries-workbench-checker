@@ -38,7 +38,7 @@ def _blame_suffix(location: str, blame: dict[str, str] | None) -> str:
     if not blame:
         return ""
     author = blame.get(location)
-    return f" (last touched by: {author})" if author else ""
+    return f" (last change authored by: {author})" if author else ""
 
 
 def render_terminal(findings: list[Finding], title: str, blame: dict[str, str] | None = None) -> str:

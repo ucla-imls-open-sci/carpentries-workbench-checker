@@ -69,7 +69,7 @@ pixi run check ./my-lesson --episode 03-sharing.md
 # Machine-readable, e.g. for a CI step of your own
 pixi run check ./my-lesson --format json
 
-# Annotate each file's findings with who last touched it (git log -1) --
+# Annotate each file's findings with who last changed it, date, short SHA --
 # turns the markdown report into something you can split straight into
 # per-owner follow-up issues. Requires my-lesson to be a git repo; silently
 # skipped (no annotations, no error) otherwise.
