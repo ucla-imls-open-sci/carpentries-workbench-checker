@@ -235,6 +235,8 @@ def _code_fence_mask(body: str) -> list[bool]:
 
 
 def check_config(lesson_dir: Path) -> list[Finding]:
+    """Check config.yaml: placeholder values, episode list vs. files on disk,
+    extension-less episode files, and glossary existence."""
     findings: list[Finding] = []
     config_path = lesson_dir / "config.yaml"
     if not config_path.exists():
@@ -882,7 +884,13 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                 check_path = check_path[: -len(".html")] + ".md"
             if not check_path:
                 continue
-            search_dirs = (episode_dir, lesson_dir, lesson_dir / "learners", lesson_dir / "instructors", lesson_dir / "profiles")
+            search_dirs = (
+                episode_dir,
+                lesson_dir,
+                lesson_dir / "learners",
+                lesson_dir / "instructors",
+                lesson_dir / "profiles",
+            )
             if not any((d / check_path.lstrip("/")).resolve().exists() for d in search_dirs):
                 findings.append(
                     Finding(
@@ -899,6 +907,9 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
 
 
 def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
+    """Run every episode-level check (front matter, divs, headings, links,
+    boilerplate, placeholder bullets, objective verbs, contractions) on one
+    episode file."""
     location = str(path.relative_to(lesson_dir)) if path.is_relative_to(lesson_dir) else path.name
     text = path.read_text(errors="replace")
     findings: list[Finding] = []
@@ -976,6 +987,8 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
 
 
 def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Finding]:
+    """Entry point: run config/support-file checks plus every episode check,
+    optionally scoped to one episode via episode_filter."""
     findings = check_config(lesson_dir)
     findings.extend(check_support_files(lesson_dir))
 

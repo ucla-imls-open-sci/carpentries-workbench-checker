@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +17,9 @@ SEVERITY_ICON_PLAIN = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}
 
 @dataclass
 class Finding:
+    """One check result: a severity/category/message, where it applies, and
+    optionally how to fix it."""
+
     severity: str  # "error" | "warning" | "info"
     category: str  # "config" | "front-matter" | "divs" | "headings" | "links"
     message: str
@@ -24,10 +27,12 @@ class Finding:
     hint: str | None = None
 
     def sort_key(self):
+        """Sort errors before warnings before info, then group by location."""
         return (SEVERITY_ORDER.get(self.severity, 9), self.location or "", self.category)
 
 
 def summarize(findings: list[Finding]) -> dict[str, int]:
+    """Count findings per severity."""
     counts = {"error": 0, "warning": 0, "info": 0}
     for f in findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -42,6 +47,7 @@ def _blame_suffix(location: str, blame: dict[str, str] | None) -> str:
 
 
 def render_terminal(findings: list[Finding], title: str, blame: dict[str, str] | None = None) -> str:
+    """Colored, grouped-by-location report for a terminal."""
     lines = [f"\033[1m{title}\033[0m"]
     counts = summarize(findings)
     lines.append(
@@ -68,6 +74,7 @@ def render_terminal(findings: list[Finding], title: str, blame: dict[str, str] |
 def render_markdown(
     findings: list[Finding], title: str, blame: dict[str, str] | None = None
 ) -> str:
+    """Checkbox-list report per location, ready to paste into a PR/issue."""
     counts = summarize(findings)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
@@ -100,6 +107,7 @@ def render_markdown(
 
 
 def render_json(findings: list[Finding], title: str) -> str:
+    """Machine-readable report, e.g. for a caller's own CI step."""
     payload = {
         "title": title,
         "generated": datetime.now(timezone.utc).isoformat(),

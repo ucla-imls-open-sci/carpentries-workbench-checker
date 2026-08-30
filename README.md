@@ -164,6 +164,21 @@ network access or local models needed. The AI review layer isn't covered by
 automated tests since it calls out to live models; it's been manually
 smoke-tested against a real public lesson for all three backends.
 
+## Linting
+
+```bash
+pixi run lint        # ruff check checker tests
+pixi run lint-fix    # same, with --fix for the auto-fixable subset
+```
+
+Runs in CI alongside the test suite. Covers unused imports/vars, import
+order, missing docstrings on public functions/classes (`checker/` only,
+`tests/*.py` is exempt, pytest's own naming convention documents test
+intent), and outdated syntax patterns. `pixi run format` (`ruff format`)
+exists too, but isn't run in CI or applied wholesale, it would reflow a lot
+of intentionally-formatted code (long hint strings, grouped constant
+tuples) for cosmetic reasons alone.
+
 ## Migrating from the old scripts
 
 This replaces `content-checker/` (`content_check.py`, `content_check_cli.py`,
