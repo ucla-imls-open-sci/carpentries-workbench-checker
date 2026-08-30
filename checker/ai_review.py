@@ -115,12 +115,18 @@ def _style_context(episode_text: str, embed_model: str) -> str:
     return "\n\n---\n\n".join(d.page_content for d in docs)
 
 
-def _build_prompt(episode_text: str, findings: list[Finding], style_context: str) -> str:
+def _build_prompt(
+    episode_text: str, findings: list[Finding], style_context: str, glossary_text: str = ""
+) -> str:
     mechanical_summary = (
         "\n".join(
             f"- [{f.severity}] {f.category}: {f.message}" for f in findings if f.location
         )
         or "(none -- the episode passed all mechanical structure checks)"
+    )
+    glossary_section = (
+        f"Current lesson glossary ({'learners/reference.md' if glossary_text else 'none found, or still the scaffold placeholder'}):\n"
+        f"{glossary_text or '(empty)'}"
     )
     return f"""You are reviewing a Carpentries Workbench lesson episode the way a human
 reviewer for The Carpentries Lab would.
@@ -137,6 +143,8 @@ the checklist above is the grading criteria):
 Mechanical structure issues already found by an automated checker (do not
 repeat these -- focus on what a checker can't catch):
 {mechanical_summary}
+
+{glossary_section}
 
 One of the mechanical checks flags objectives that *open* with a vague verb
 (know/understand/appreciate/...) as a cheap heuristic. Do not treat that as
@@ -167,6 +175,15 @@ checklist above:
    is content well-sequenced with worked examples before exercises?
 5. Tone: dismissive language ("simply", "just"), unstated assumptions, or
    unexplained jargon that would trip up a learner encountering this fresh.
+6. Glossary gaps: list every term of art, acronym, or domain-specific word
+   this episode uses that a learner at the stated audience level couldn't
+   be expected to already know, and that isn't already defined in the
+   glossary shown above. For each, give a one-sentence draft definition
+   scoped to how this lesson actually uses the term, not a generic
+   dictionary definition. Skip a term entirely if the episode already
+   explains it inline, that's not a glossary gap, that's the episode doing
+   its job. Also skip anything already covered in the glossary above, even
+   loosely, don't suggest a near-duplicate entry.
 Keep it concrete -- point at specific lines or phrases, don't just restate
 the checklist above."""
 
@@ -252,10 +269,11 @@ def review_episode(
     backend: str,
     model: str | None,
     embed_model: str = EMBED_MODEL,
+    glossary_text: str = "",
 ) -> str:
     if backend not in BACKENDS:
         raise ValueError(f"unknown backend `{backend}`, expected one of {sorted(BACKENDS)}")
     resolved_model = model or DEFAULT_MODELS[backend]
     style_context = _style_context(episode_text, embed_model)
-    prompt = _build_prompt(episode_text, findings, style_context)
+    prompt = _build_prompt(episode_text, findings, style_context, glossary_text)
     return BACKENDS[backend](prompt, resolved_model)
