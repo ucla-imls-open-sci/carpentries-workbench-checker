@@ -44,6 +44,65 @@ CONFIG_PLACEHOLDER_VALUES = {
     "source": "https://github.com/carpentries/workbench-template-md",
 }
 
+# Exact strings from `sandpaper::create_lesson()`'s default scaffold episode.
+# A CLDT cohort under deadline pressure regularly ships these unedited -- they
+# read as "done" (all three required blocks are present, front matter is
+# valid) but the content is still the template's own worked example, not the
+# lesson's. Deterministic and exact-match on purpose: this only fires on the
+# literal scaffold text, never on a real episode that happens to share a
+# word with it.
+SCAFFOLD_EPISODE_TITLE = "using markdown"
+SCAFFOLD_BODY_FINGERPRINTS = (
+    "this is a lesson created via the carpentries workbench",
+    'paste("this", "new", "lesson", "looks", "good")',
+    "buoyant barnacle",
+)
+
+# Placeholder bullet text left in required blocks after generating a lesson --
+# the block itself exists (so check_divs is silent), but nothing inside it is
+# real content yet. Matched against a bullet's full text, lowercased and
+# stripped, so "Keypoint 1" and "keypoint1" both match.
+PLACEHOLDER_BULLET_TEXTS = {
+    "keypoint1",
+    "keypoint2",
+    "keypoint 1",
+    "keypoint 2",
+    "objective 1",
+    "objective n",
+    "put questions here",
+    "put objectives here",
+    "put keypoints here",
+}
+
+# Scaffold text in learners/instructors/profiles files -- these aren't
+# episodes, so check_episode() never sees them, and check_config() only
+# checks that learners/reference.md *exists*. A CLDT-produced repo commonly
+# has all of these still at their generated defaults.
+SUPPORT_FILE_CHECKS = {
+    "learners/reference.md": (
+        "this is a placeholder file",
+        "[Carpentries Lab] 'No key terms are missing from the lesson glossary' is part of "
+        "the reviewer checklist. Port over the terms your episodes actually use.",
+    ),
+    "learners/setup.md": (
+        "fixme: setup instructions live in this document",
+        "[CLDT] Covered in the 'Preparing to Teach' episode's Setup Instructions exercise. "
+        "If your lesson needs no software/data setup, replace this with a short note saying "
+        "so, rather than leaving the scaffold's example instructions in place.",
+    ),
+    "instructors/instructor-notes.md": (
+        "this is a placeholder file",
+        "[CLDT] Covered in the 'Preparing to Teach' episode's Instructor Notes exercise: "
+        "rationale, what worked/didn't in early drafts, teaching tips, common "
+        "troubleshooting.",
+    ),
+    "profiles/learner-profiles.md": (
+        "this is a placeholder file",
+        "Add at least one realistic learner profile, used to sanity-check exercise "
+        "difficulty against your stated audience.",
+    ),
+}
+
 # Collaborative Lesson Development Training (carpentries.github.io/lesson-development-training)
 # and The Carpentries Lab reviewer checklist (github.com/carpentries-lab/reviews) both call out
 # weak, unmeasurable objective verbs -- prefer "explain"/"choose"/"predict" over these. This is
@@ -185,8 +244,35 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 "config",
                 f"config.yaml lists episode `{name}` but it does not exist under episodes/",
                 location="config.yaml",
+                hint="Create the file, or remove it from `episodes:` if it's no longer "
+                "planned.",
             )
         )
+
+    # A file sitting in episodes/ without a .md/.Rmd extension is invisible to
+    # both Sandpaper and this checker's own glob() elsewhere -- it silently
+    # never gets built, never gets checked, and never shows up as "missing"
+    # anywhere else, since nothing ever looked for it. This is exactly what
+    # happened to a real draft episode: renamed with a typo, dropped its
+    # extension, and sat unbuilt and uninspected for days before anyone
+    # noticed. `fig/`, `data/`, and dotfiles are legitimate non-episode
+    # entries and are excluded.
+    if episodes_dir.exists():
+        for p in sorted(episodes_dir.glob("*")):
+            if p.is_dir() or p.name.startswith("."):
+                continue
+            if p.suffix not in (".md", ".Rmd"):
+                findings.append(
+                    Finding(
+                        "warning",
+                        "config",
+                        f"episodes/{p.name} has no .md/.Rmd extension, Sandpaper won't "
+                        "build it and this checker can't inspect it",
+                        location="config.yaml",
+                        hint="If this is meant to be an episode, rename it with a .md "
+                        "extension. Right now it's invisible to the build.",
+                    )
+                )
 
     # A blank `episodes:` field is valid and documented: sandpaper then includes
     # every file under episodes/ automatically, in alphabetical order. Only flag
@@ -227,6 +313,31 @@ def check_config(lesson_dir: Path) -> list[Finding]:
     return findings
 
 
+def check_support_files(lesson_dir: Path) -> list[Finding]:
+    """Check learners/, instructors/, and profiles/ content -- files
+    check_episode() never sees (they aren't episodes) and check_config()
+    only checks for existence of, not content. A CLDT-produced repo commonly
+    has all of these still at their `sandpaper::create_lesson()` defaults,
+    each of these files being generated as a valid, present, entirely
+    unwritten placeholder."""
+    findings = []
+    for rel_path, (fingerprint, hint) in SUPPORT_FILE_CHECKS.items():
+        path = lesson_dir / rel_path
+        if not path.exists():
+            continue
+        if fingerprint in path.read_text(errors="replace").lower():
+            findings.append(
+                Finding(
+                    "warning",
+                    "boilerplate",
+                    f"{rel_path} is still the scaffold placeholder, not written yet",
+                    location=rel_path,
+                    hint=hint,
+                )
+            )
+    return findings
+
+
 def _split_front_matter(text: str) -> tuple[dict, str] | None:
     match = FRONT_MATTER_RE.match(text)
     if not match:
@@ -238,16 +349,31 @@ def _split_front_matter(text: str) -> tuple[dict, str] | None:
     return front_matter, match.group(2)
 
 
+# Real bug found in a CLDT-produced lesson: `exercise:` (singular) instead
+# of `exercises:` silently passes YAML parsing and just looks like a missing
+# field, with no indication the author actually wrote a value, just under
+# the wrong key. Worth naming directly rather than making the author guess.
+_SINGULAR_FIELD_TYPOS = {"exercises": "exercise"}
+
+
 def _check_front_matter(front_matter: dict, location: str) -> list[Finding]:
     findings = []
     for field in ("title", "teaching", "exercises"):
         if field not in front_matter or front_matter[field] in (None, ""):
+            typo = _SINGULAR_FIELD_TYPOS.get(field)
+            hint = f"Add `{field}:` to the YAML front matter."
+            if typo and typo in front_matter:
+                hint = (
+                    f"Found `{typo}:` instead, that's likely a typo, the required "
+                    f"field is `{field}:` (plural)."
+                )
             findings.append(
                 Finding(
                     "error",
                     "front-matter",
                     f"missing required front-matter field `{field}`",
                     location=location,
+                    hint=hint,
                 )
             )
     for field in ("teaching", "exercises"):
@@ -259,6 +385,8 @@ def _check_front_matter(front_matter: dict, location: str) -> list[Finding]:
                     "front-matter",
                     f"`{field}` should be a number of minutes, got {value!r}",
                     location=location,
+                    hint=f"Set `{field}:` to a plain integer, e.g. `{field}: 15`, not a "
+                    "quoted string or a range.",
                 )
             )
 
@@ -348,6 +476,95 @@ def _check_objective_verbs(body: str, location: str) -> tuple[list[Finding], int
     return findings, objective_count
 
 
+def _check_boilerplate(front_matter: dict, body: str, location: str) -> list[Finding]:
+    """Flag unedited `sandpaper::create_lesson()` scaffold content. The three
+    required blocks all being present (so `_check_divs` is silent) says
+    nothing about whether anyone has actually written the episode yet -- a
+    CLDT cohort under time pressure regularly ships the scaffold's own worked
+    example untouched. Exact substring match on purpose, to avoid flagging
+    real content that happens to share incidental wording."""
+    findings = []
+    title = str(front_matter.get("title") or "").strip().lower()
+    if title == SCAFFOLD_EPISODE_TITLE:
+        findings.append(
+            Finding(
+                "error",
+                "boilerplate",
+                f'title is still the scaffold default: "{front_matter.get("title")}"',
+                location=location,
+                hint="[CLDT] This is `sandpaper::create_lesson()`'s own default episode "
+                "title, not a real one. Replace it before this episode is considered "
+                "written.",
+            )
+        )
+
+    body_lower = body.lower()
+    for fingerprint in SCAFFOLD_BODY_FINGERPRINTS:
+        if fingerprint in body_lower:
+            findings.append(
+                Finding(
+                    "warning",
+                    "boilerplate",
+                    f'body still contains scaffold example text: "{fingerprint}"',
+                    location=location,
+                    hint="[CLDT] This looks like unedited Carpentries Workbench scaffold "
+                    "content, not real lesson material. Replace it, or delete the episode "
+                    "if it isn't ready to write yet, an empty episode is more honest than "
+                    "a filled-in-looking one that's still the template.",
+                )
+            )
+    return findings
+
+
+def _check_placeholder_bullets(body: str, location: str) -> list[Finding]:
+    """Flag placeholder bullet text (`keypoint1`, `Put questions here`, ...)
+    left inside `questions`/`objectives`/`keypoints` blocks. The block itself
+    existing satisfies `_check_divs`'s required-block check, so this is the
+    only thing that catches "structurally complete, actually empty"."""
+    findings = []
+    in_code = _code_fence_mask(body)
+    lines = body.splitlines()
+    depth = 0
+    tracked_type: str | None = None
+    tracked_depth: int | None = None
+
+    for i, line in enumerate(lines):
+        if in_code[i]:
+            continue
+        match = DIV_FENCE_RE.match(line.strip())
+        if match:
+            div_type = match.group(2).lower()
+            if div_type:
+                if div_type in REQUIRED_TOP_DIVS and depth == 0:
+                    tracked_type = div_type
+                    tracked_depth = depth
+                depth += 1
+            else:
+                depth -= 1
+                if tracked_type is not None and depth == tracked_depth:
+                    tracked_type = None
+            continue
+
+        if tracked_type is None:
+            continue
+        stripped = line.strip()
+        if not stripped.startswith(("-", "*")):
+            continue
+        bullet_text = stripped.lstrip("-* ").strip().lower()
+        if bullet_text in PLACEHOLDER_BULLET_TEXTS:
+            findings.append(
+                Finding(
+                    "error",
+                    "boilerplate",
+                    f'`{tracked_type}` still has placeholder bullet text: "{stripped.lstrip("-* ").strip()}"',
+                    location=location,
+                    hint="[CLDT] Replace with real content, this is scaffold placeholder "
+                    "text, not a written keypoint/objective/question.",
+                )
+            )
+    return findings
+
+
 def _check_contractions(body: str, location: str) -> list[Finding]:
     """The Carpentries Lab reviewer checklist flags heavy contraction use as an
     accessibility concern for translation and ESL learners. Contractions are a
@@ -409,6 +626,8 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                         f"unrecognized div type `{div_type}` on line {lineno + line_offset}"
                         " -- verify against the Workbench style guide",
                         location=location,
+                        hint="See https://carpentries.github.io/sandpaper-docs/episodes.html "
+                        "for the full list of recognized div types.",
                     )
                 )
         else:
@@ -420,6 +639,9 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                         f"extraneous closing `:::` on line {lineno + line_offset} with no "
                         "matching open div",
                         location=location,
+                        hint="Either this fence has no matching opening `::: type` above it, "
+                        "or an earlier div's closing fence was deleted, causing this one to "
+                        "close the wrong block. Check the div immediately above.",
                     )
                 )
             else:
@@ -432,6 +654,11 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                 "divs",
                 f"`{div_type}` div opened on line {lineno + line_offset} is never closed",
                 location=location,
+                hint="Add a closing `:::` fence (same or more colons than the opening "
+                "fence) before the next block starts. An unclosed div silently swallows "
+                "everything after it, including blocks that look fine on their own, "
+                "check whether a `keypoints`/`questions`/`objectives` block further down "
+                "actually landed inside this one instead of at the top level.",
             )
         )
 
@@ -443,6 +670,10 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                     "divs",
                     f"missing required `{required}` block",
                     location=location,
+                    hint=f"Every episode needs a top-level `:::: {required} ... ::::` block. "
+                    "If one exists in the file but isn't showing as top-level, an earlier "
+                    "unclosed div is probably nesting it, see any 'never closed' finding "
+                    "above first.",
                 )
             )
 
@@ -536,6 +767,9 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                             "links",
                             f"image on line {lineno} points to a missing file: `{path}`",
                             location=location,
+                            hint="Check the path is relative to episodes/ (images "
+                            "typically live in episodes/fig/), and that the file was "
+                            "actually committed.",
                         )
                     )
 
@@ -570,6 +804,9 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f"internal link on line {lineno} may be broken: `{path}`",
                         location=location,
+                        hint="Confirm the target exists relative to episodes/, the "
+                        "lesson root, or learners/, instructors/, profiles/. A link to "
+                        "another episode's rendered .html targets its .md source.",
                     )
                 )
     return findings
@@ -605,6 +842,8 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_divs(body, location, line_offset))
     findings.extend(_check_headings(body, location, line_offset))
     findings.extend(_check_links(body, lesson_dir, location, line_offset))
+    findings.extend(_check_boilerplate(front_matter, body, location))
+    findings.extend(_check_placeholder_bullets(body, location))
     objective_findings, objective_count = _check_objective_verbs(body, location)
     findings.extend(objective_findings)
     findings.extend(_check_contractions(body, location))
@@ -652,6 +891,7 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
 
 def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Finding]:
     findings = check_config(lesson_dir)
+    findings.extend(check_support_files(lesson_dir))
 
     episodes_dir = lesson_dir / "episodes"
     if not episodes_dir.exists():

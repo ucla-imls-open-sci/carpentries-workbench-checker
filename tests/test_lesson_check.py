@@ -12,14 +12,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from checker.lesson_check import (
+    _check_boilerplate,
     _check_contractions,
     _check_divs,
     _check_front_matter,
     _check_headings,
     _check_links,
     _check_objective_verbs,
+    _check_placeholder_bullets,
     check_config,
     check_episode,
+    check_support_files,
 )
 
 VALID_EPISODE_BODY = """\
@@ -387,6 +390,160 @@ def test_config_glossary_at_learners_path_is_recognized(tmp_path):
     (lesson_dir / "learners" / "reference.md").write_text("# Reference\n")
     findings = check_config(lesson_dir)
     assert not any("glossary" in f.message for f in findings)
+
+
+# -- boilerplate / placeholder detection (CLDT: catch unedited scaffold) ----
+# Real bugs found auditing a live CLDT cohort's lesson repo the week after
+# training: episodes left at the scaffold's own title/body, and required
+# blocks present but still holding the scaffold's placeholder bullets.
+
+
+def test_boilerplate_scaffold_title_is_error():
+    findings = _check_boilerplate({"title": "Using Markdown"}, "Some real body.", "ep.md")
+    assert any(f.severity == "error" and "scaffold default" in f.message for f in findings)
+
+
+def test_boilerplate_real_title_is_silent():
+    findings = _check_boilerplate({"title": "Why License?"}, "Some real body.", "ep.md")
+    assert findings == []
+
+
+def test_boilerplate_scaffold_body_fingerprint_is_warning():
+    body = 'Some intro.\n\n```r\npaste("This", "new", "lesson", "looks", "good")\n```\n'
+    findings = _check_boilerplate({"title": "Real Title"}, body, "ep.md")
+    assert any(f.severity == "warning" and "scaffold example text" in f.message for f in findings)
+
+
+def test_boilerplate_real_body_is_silent():
+    findings = _check_boilerplate(
+        {"title": "Real Title"}, "This episode explains real licensing content.", "ep.md"
+    )
+    assert findings == []
+
+
+def test_placeholder_bullets_keypoint_variants_are_flagged():
+    body = """\
+:::::: keypoints
+- keypoint1
+- keypoint 2
+::::::
+"""
+    findings = _check_placeholder_bullets(body, "ep.md")
+    assert len(findings) == 2
+    assert all(f.severity == "error" for f in findings)
+
+
+def test_placeholder_bullets_real_keypoint_is_silent():
+    body = """\
+:::::: keypoints
+- A license does not give away ownership of your code.
+::::::
+"""
+    assert _check_placeholder_bullets(body, "ep.md") == []
+
+
+def test_placeholder_bullets_only_checked_inside_required_blocks():
+    # A challenge/solution bullet that happens to read "objective 1" (e.g. a
+    # multiple-choice answer option) must not be flagged -- only the actual
+    # questions/objectives/keypoints blocks are in scope.
+    body = """\
+:::::: challenge
+- objective 1
+::::::
+"""
+    assert _check_placeholder_bullets(body, "ep.md") == []
+
+
+# -- extension-less episode files (CLDT: catch invisible-to-the-build files) -
+
+
+def test_config_extension_less_episode_file_is_warning(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    # No .md/.Rmd extension -- Sandpaper's glob (and this checker's own
+    # elsewhere) silently excludes it, so nothing else would ever flag it.
+    (lesson_dir / "episodes" / "episode-2-permissive-vs-copyleft").write_text(episode_text())
+    findings = check_config(lesson_dir)
+    assert any(
+        f.severity == "warning" and "no .md/.Rmd extension" in f.message for f in findings
+    )
+
+
+def test_config_fig_and_data_dirs_are_not_flagged(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "episodes" / "fig").mkdir()
+    (lesson_dir / "episodes" / "fig" / "diagram.png").write_bytes(b"")
+    findings = check_config(lesson_dir)
+    assert not any("no .md/.Rmd extension" in f.message for f in findings)
+
+
+# -- support files: learners/, instructors/, profiles/ content --------------
+# check_episode() never sees these (they aren't episodes), and check_config()
+# only checked for existence, not content -- real repo had all four of these
+# still at the sandpaper::create_lesson() default.
+
+
+def test_support_files_placeholder_reference_is_warning(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "learners").mkdir()
+    (lesson_dir / "learners" / "reference.md").write_text(
+        "---\ntitle: 'Reference'\n---\n\n## Glossary\n\nThis is a placeholder file. Please add content here.\n"
+    )
+    findings = check_support_files(lesson_dir)
+    assert any("learners/reference.md" in f.location for f in findings)
+
+
+def test_support_files_real_reference_is_silent(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "learners").mkdir()
+    (lesson_dir / "learners" / "reference.md").write_text(
+        "---\ntitle: 'Reference'\n---\n\n## Glossary\n\nPermissive license\n: Allows reuse with minimal restriction.\n"
+    )
+    assert check_support_files(lesson_dir) == []
+
+
+def test_support_files_missing_file_is_not_flagged(tmp_path):
+    # Absence is check_config's job (the existing glossary-file-exists check);
+    # check_support_files only judges content of files that are present.
+    lesson_dir = make_lesson(tmp_path)
+    assert check_support_files(lesson_dir) == []
+
+
+def test_support_files_all_four_paths_checked(tmp_path):
+    lesson_dir = make_lesson(tmp_path)
+    (lesson_dir / "learners").mkdir()
+    (lesson_dir / "instructors").mkdir()
+    (lesson_dir / "profiles").mkdir()
+    (lesson_dir / "learners" / "setup.md").write_text(
+        "---\ntitle: Setup\n---\n\nFIXME: Setup instructions live in this document.\n"
+    )
+    (lesson_dir / "instructors" / "instructor-notes.md").write_text(
+        "---\ntitle: 'Instructor Notes'\n---\n\nThis is a placeholder file. Please add content here.\n"
+    )
+    (lesson_dir / "profiles" / "learner-profiles.md").write_text(
+        "---\ntitle: FIXME\n---\n\nThis is a placeholder file. Please add content here.\n"
+    )
+    findings = check_support_files(lesson_dir)
+    locations = {f.location for f in findings}
+    assert locations == {
+        "learners/setup.md",
+        "instructors/instructor-notes.md",
+        "profiles/learner-profiles.md",
+    }
+
+
+# -- front-matter typo hint (CLDT: exercise: vs exercises:) -----------------
+
+
+def test_front_matter_exercise_typo_gets_specific_hint():
+    findings = _check_front_matter({"title": "Ep", "teaching": 15, "exercise": 10}, "ep.md")
+    missing = [f for f in findings if "exercises" in f.message]
+    assert missing and missing[0].hint and "exercise:" in missing[0].hint
+
+
+def test_front_matter_generic_missing_field_has_generic_hint():
+    findings = _check_front_matter({"teaching": 15, "exercises": 10}, "ep.md")
+    missing = [f for f in findings if "title" in f.message]
+    assert missing and missing[0].hint == "Add `title:` to the YAML front matter."
 
 
 # -- end to end -------------------------------------------------------------
