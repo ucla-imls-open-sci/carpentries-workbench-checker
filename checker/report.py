@@ -34,7 +34,14 @@ def summarize(findings: list[Finding]) -> dict[str, int]:
     return counts
 
 
-def render_terminal(findings: list[Finding], title: str) -> str:
+def _blame_suffix(location: str, blame: dict[str, str] | None) -> str:
+    if not blame:
+        return ""
+    author = blame.get(location)
+    return f" (last touched by: {author})" if author else ""
+
+
+def render_terminal(findings: list[Finding], title: str, blame: dict[str, str] | None = None) -> str:
     lines = [f"\033[1m{title}\033[0m"]
     counts = summarize(findings)
     lines.append(
@@ -49,7 +56,7 @@ def render_terminal(findings: list[Finding], title: str) -> str:
         by_location.setdefault(f.location or "general", []).append(f)
 
     for location, items in by_location.items():
-        lines.append(f"\n\033[1m{location}\033[0m")
+        lines.append(f"\n\033[1m{location}\033[0m{_blame_suffix(location, blame)}")
         for f in items:
             icon = SEVERITY_ICON.get(f.severity, "")
             lines.append(f"  {icon} [{f.category}] {f.message}")
@@ -58,7 +65,9 @@ def render_terminal(findings: list[Finding], title: str) -> str:
     return "\n".join(lines)
 
 
-def render_markdown(findings: list[Finding], title: str) -> str:
+def render_markdown(
+    findings: list[Finding], title: str, blame: dict[str, str] | None = None
+) -> str:
     counts = summarize(findings)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
@@ -77,7 +86,7 @@ def render_markdown(findings: list[Finding], title: str) -> str:
         by_location.setdefault(f.location or "General", []).append(f)
 
     for location, items in by_location.items():
-        lines.append(f"## {location}")
+        lines.append(f"## {location}{_blame_suffix(location, blame)}")
         lines.append("")
         for f in items:
             icon = SEVERITY_ICON_PLAIN.get(f.severity, "")

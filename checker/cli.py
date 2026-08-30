@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from checker.ai_review import BACKENDS, review_episode
-from checker.lesson_check import run_checks
+from checker.lesson_check import SUPPORT_FILE_CHECKS, run_checks
 from checker.report import render_html_via_quarto, render_json, render_markdown, render_terminal
 
 
@@ -45,6 +45,44 @@ def _write_or_print(text: str, output: str | None):
         print(text)
 
 
+def _read_glossary(lesson_dir: Path) -> str:
+    """The lesson's learners/reference.md, empty string if missing or still
+    the sandpaper scaffold placeholder -- feeding placeholder text to the AI
+    review as if it were "the current glossary" would make it think existing
+    terms are covered when nothing has actually been written yet."""
+    path = lesson_dir / "learners" / "reference.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(errors="replace")
+    fingerprint, _hint = SUPPORT_FILE_CHECKS["learners/reference.md"]
+    if fingerprint in text.lower():
+        return ""
+    return text
+
+
+def _blame_map(lesson_dir: Path, findings: list) -> dict[str, str]:
+    """Last author to touch each finding's file, via `git log -1 --format=%an`.
+
+    Turns a flat findings report into something closer to what filing GitHub
+    issues per-owner needs: who to assign each file's fixes to. Best-effort --
+    a lesson_dir that isn't a git repo (or a `git log` failure on one file)
+    just means that location gets no author suffix, not a crash.
+    """
+    locations = sorted({f.location for f in findings if f.location})
+    blame: dict[str, str] = {}
+    for location in locations:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%an", "--", location],
+            cwd=lesson_dir,
+            capture_output=True,
+            text=True,
+        )
+        author = result.stdout.strip()
+        if result.returncode == 0 and author:
+            blame[location] = author
+    return blame
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Carpentries Workbench lesson checker")
     parser.add_argument("target", help="local lesson directory, or a git URL to clone and check")
@@ -53,6 +91,13 @@ def main(argv: list[str] | None = None) -> int:
         "--format", choices=("terminal", "markdown", "json"), default="terminal"
     )
     parser.add_argument("--output", help="write the report here instead of stdout")
+    parser.add_argument(
+        "--blame",
+        action="store_true",
+        help="annotate each file's findings with its last-touching author (git log -1), "
+        "useful for splitting a report into per-owner follow-up issues; requires "
+        "lesson_dir to be a git repo, silently skipped otherwise",
+    )
     parser.add_argument(
         "--html",
         action="store_true",
@@ -77,18 +122,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         findings = run_checks(lesson_dir, episode_filter=args.episode)
         title = f"Lesson Check Report — {args.target}"
+        blame = _blame_map(lesson_dir, findings) if args.blame else None
+        if args.blame and not blame:
+            print(
+                "--blame found no authors -- is lesson_dir a git repo with commit "
+                "history for these files?",
+                file=sys.stderr,
+            )
 
         if args.format == "terminal":
-            report_text = render_terminal(findings, title)
+            report_text = render_terminal(findings, title, blame=blame)
         elif args.format == "markdown":
-            report_text = render_markdown(findings, title)
+            report_text = render_markdown(findings, title, blame=blame)
         else:
             report_text = render_json(findings, title)
 
         _write_or_print(report_text, args.output)
 
         if args.html:
-            md_text = render_markdown(findings, title)
+            md_text = render_markdown(findings, title, blame=blame)
             out_path = Path(args.output).with_suffix(".html") if args.output else Path("report.html")
             try:
                 rendered = render_html_via_quarto(md_text, out_path)
@@ -111,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if args.episode:
                 episode_files = [p for p in episode_files if p.name == args.episode]
+            glossary_text = _read_glossary(lesson_dir)
             for path in episode_files:
                 relative_location = str(path.relative_to(lesson_dir))
                 episode_findings = [f for f in findings if f.location == relative_location]
@@ -121,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.backend,
                     args.model,
                     args.embed_model,
+                    glossary_text,
                 )
                 print(review)
 
