@@ -67,6 +67,11 @@ pixi run check ./my-lesson --format markdown --output report.md --html
 # (requires --html; a no-op warning otherwise)
 pixi run check ./my-lesson --format markdown --output report.md --html --open
 
+# PDF, for sharing with someone who doesn't want a repo checkout or a browser
+# tab -- also via Quarto, additionally needs a LaTeX distribution
+# (`quarto install tinytex`, or an existing MacTeX/TeX Live on PATH)
+pixi run check ./my-lesson --format markdown --output report.md --pdf
+
 # One episode only
 pixi run check ./my-lesson --episode 03-sharing.md
 
@@ -101,6 +106,13 @@ Every finding whose category has a canonical Workbench/Carpentries doc
 in when there isn't one. `boilerplate` findings don't get one, since it's a
 check this tool invented rather than something sandpaper/pegboard document,
 so their instance-specific hints carry the explanation instead.
+
+`--pdf` renders the same markdown through Quarto with a `pdf` target instead
+of `html` -- same checklist, same clickable links (as real hyperlinks, not
+just blue text). One difference: the ❌/⚠️/ℹ️ severity icons don't render in
+PDF (LaTeX's default font has no emoji glyphs, so they're silently dropped);
+severity is still legible from the checkbox/bullet plus the bold category
+name, but it's not as visually distinct as the terminal/HTML output.
 
 ### Adding the AI narrative review
 

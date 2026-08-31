@@ -214,12 +214,14 @@ def render_json(findings: list[Finding], title: str) -> str:
     return json.dumps(payload, indent=2)
 
 
-def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
-    """Render a markdown report to HTML with Quarto, if it's installed. Returns
-    the output path on success, or None if quarto isn't on PATH at all (caller
-    should fall back to the plain markdown/terminal report, not fail). Raises
-    RuntimeError if quarto is present but the render itself fails, so that
-    error doesn't get silently swallowed and mistaken for "quarto missing"."""
+def _render_via_quarto(markdown_text: str, out_path: Path, to: str, format_yaml: str) -> Path | None:
+    """Shared by render_html_via_quarto/render_pdf_via_quarto: write the report
+    as a .qmd with the given pandoc `format:` block, render it to `to`
+    ("html"/"pdf"), and copy the result to out_path. Returns None if quarto
+    isn't on PATH at all (caller should fall back to the plain markdown/
+    terminal report, not fail). Raises RuntimeError if quarto is present but
+    the render itself fails -- e.g. no LaTeX distribution for a PDF render --
+    so that doesn't get silently swallowed and mistaken for "quarto missing"."""
     if shutil.which("quarto") is None:
         return None
 
@@ -233,11 +235,10 @@ def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
         tmp_dir = Path(tmp).resolve()
         qmd_path = tmp_dir / "report.qmd"
         qmd_path.write_text(
-            "---\ntitle: Lesson Check Report\nformat:\n  html:\n    toc: true\n    "
-            "embed-resources: true\n---\n\n" + markdown_text
+            f"---\ntitle: Lesson Check Report\nformat:\n{format_yaml}---\n\n" + markdown_text
         )
         result = subprocess.run(
-            ["quarto", "render", str(qmd_path), "--to", "html", "-o", out_path.name],
+            ["quarto", "render", str(qmd_path), "--to", to, "-o", out_path.name],
             cwd=tmp_dir,
             capture_output=True,
             text=True,
@@ -247,3 +248,21 @@ def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
         rendered = tmp_dir / out_path.name
         out_path.write_bytes(rendered.read_bytes())
     return out_path
+
+
+def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
+    """Render a markdown report to HTML with Quarto, if it's installed. See
+    `_render_via_quarto` for the None/RuntimeError contract."""
+    return _render_via_quarto(
+        markdown_text, out_path, "html", "  html:\n    toc: true\n    embed-resources: true\n"
+    )
+
+
+def render_pdf_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
+    """Render a markdown report to PDF with Quarto, if it's installed and a
+    LaTeX distribution is available (`quarto install tinytex`, or an existing
+    MacTeX/TeX Live install on PATH). See `_render_via_quarto` for the
+    None/RuntimeError contract -- a missing LaTeX engine surfaces as a
+    RuntimeError with quarto's own error text, not a silent None, since
+    quarto being on PATH doesn't guarantee PDF rendering works."""
+    return _render_via_quarto(markdown_text, out_path, "pdf", "  pdf:\n    toc: true\n")

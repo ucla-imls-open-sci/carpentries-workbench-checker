@@ -178,3 +178,44 @@ def test_open_flag_when_quarto_missing_prints_nothing_to_open(tmp_path, monkeypa
     monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, _out_path: None)
     main([str(tmp_path), "--html", "--open", "--output", str(tmp_path / "report.md")])
     assert "no HTML file was rendered" in capsys.readouterr().err
+
+
+# -- --pdf flag ------------------------------------------------------------
+
+
+def test_pdf_flag_writes_rendered_pdf(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path: out_path)
+    main([str(tmp_path), "--pdf", "--output", str(tmp_path / "report.md")])
+    assert f"wrote {tmp_path / 'report.pdf'}" in capsys.readouterr().err
+
+
+def test_pdf_flag_default_output_name_has_no_markdown_output(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path: out_path)
+    main([str(tmp_path), "--pdf"])
+    assert "wrote report.pdf" in capsys.readouterr().err
+
+
+def test_pdf_flag_when_quarto_missing_prints_notice(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, _out_path: None)
+    main([str(tmp_path), "--pdf", "--output", str(tmp_path / "report.md")])
+    assert "quarto not found on PATH -- skipping PDF render" in capsys.readouterr().err
+
+
+def test_pdf_flag_when_render_fails_prints_error(tmp_path, monkeypatch, capsys):
+    def _raise(_md_text, _out_path):
+        raise RuntimeError("no LaTeX installation found")
+
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", _raise)
+    main([str(tmp_path), "--pdf", "--output", str(tmp_path / "report.md")])
+    err = capsys.readouterr().err
+    assert "quarto render failed, skipping PDF output" in err
+    assert "no LaTeX installation found" in err
+
+
+def test_html_and_pdf_flags_together_both_render(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, out_path: out_path)
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path: out_path)
+    main([str(tmp_path), "--html", "--pdf", "--output", str(tmp_path / "report.md")])
+    err = capsys.readouterr().err
+    assert f"wrote {tmp_path / 'report.html'}" in err
+    assert f"wrote {tmp_path / 'report.pdf'}" in err

@@ -21,7 +21,13 @@ from checker.lesson_check import (
     resolve_glossary_path,
     run_checks,
 )
-from checker.report import render_html_via_quarto, render_json, render_markdown, render_terminal
+from checker.report import (
+    render_html_via_quarto,
+    render_json,
+    render_markdown,
+    render_pdf_via_quarto,
+    render_terminal,
+)
 
 
 def _resolve_target(target: str) -> tuple[Path, tempfile.TemporaryDirectory | None]:
@@ -187,6 +193,13 @@ def main(argv: list[str] | None = None) -> int:
         help="open the rendered HTML report in your default browser (requires --html)",
     )
     parser.add_argument(
+        "--pdf",
+        action="store_true",
+        help="also render the markdown report to PDF with Quarto, if installed -- also "
+        "needs a LaTeX distribution (`quarto install tinytex`, or an existing MacTeX/TeX "
+        "Live on PATH); good for sharing with someone who doesn't want a repo checkout",
+    )
+    parser.add_argument(
         "--ai",
         action="store_true",
         help="also run an AI narrative review of style/pedagogy (costs time and, for "
@@ -226,30 +239,53 @@ def main(argv: list[str] | None = None) -> int:
 
         _write_or_print(report_text, args.output)
 
-        if args.html:
+        rendered_html = None
+        if args.html or args.pdf:
             md_text = render_markdown(findings, title, blame=blame, github_base=github_base)
-            out_path = Path(args.output).with_suffix(".html") if args.output else Path("report.html")
-            try:
-                rendered = render_html_via_quarto(md_text, out_path)
-            except RuntimeError as exc:
-                print(f"quarto render failed, skipping HTML output: {exc}", file=sys.stderr)
-                rendered = None
+
+            if args.html:
+                out_path = (
+                    Path(args.output).with_suffix(".html") if args.output else Path("report.html")
+                )
+                try:
+                    rendered_html = render_html_via_quarto(md_text, out_path)
+                except RuntimeError as exc:
+                    print(f"quarto render failed, skipping HTML output: {exc}", file=sys.stderr)
+                else:
+                    if rendered_html is None:
+                        print(
+                            "quarto not found on PATH -- skipping HTML render "
+                            "(install from https://quarto.org, or use --format markdown)",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(f"wrote {rendered_html}", file=sys.stderr)
+
+            if args.pdf:
+                pdf_out_path = (
+                    Path(args.output).with_suffix(".pdf") if args.output else Path("report.pdf")
+                )
+                try:
+                    rendered_pdf = render_pdf_via_quarto(md_text, pdf_out_path)
+                except RuntimeError as exc:
+                    print(f"quarto render failed, skipping PDF output: {exc}", file=sys.stderr)
+                else:
+                    if rendered_pdf is None:
+                        print(
+                            "quarto not found on PATH -- skipping PDF render "
+                            "(install from https://quarto.org, or use --format markdown)",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(f"wrote {rendered_pdf}", file=sys.stderr)
+
+        if args.open:
+            if rendered_html is not None:
+                webbrowser.open(rendered_html.resolve().as_uri())
+            elif args.html:
+                print("--open: no HTML file was rendered, nothing to open", file=sys.stderr)
             else:
-                if rendered is None:
-                    print(
-                        "quarto not found on PATH -- skipping HTML render "
-                        "(install from https://quarto.org, or use --format markdown)",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(f"wrote {rendered}", file=sys.stderr)
-            if args.open:
-                if rendered is not None:
-                    webbrowser.open(rendered.resolve().as_uri())
-                else:
-                    print("--open: no HTML file was rendered, nothing to open", file=sys.stderr)
-        elif args.open:
-            print("--open has no effect without --html", file=sys.stderr)
+                print("--open has no effect without --html", file=sys.stderr)
 
         if args.ai:
             episodes_dir = lesson_dir / "episodes"
