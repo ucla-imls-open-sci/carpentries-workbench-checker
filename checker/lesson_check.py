@@ -594,6 +594,7 @@ def _check_boilerplate(
                     f'body still contains scaffold example text on line {lineno}: '
                     f'"{fingerprint}"',
                     location=location,
+                    line=lineno,
                     hint="[CLDT] This looks like unedited Carpentries Workbench scaffold "
                     "content, not real lesson material. Replace it, or delete the episode "
                     "if it isn't ready to write yet, an empty episode is more honest than "
@@ -603,7 +604,7 @@ def _check_boilerplate(
     return findings
 
 
-def _check_placeholder_bullets(body: str, location: str) -> list[Finding]:
+def _check_placeholder_bullets(body: str, location: str, line_offset: int = 0) -> list[Finding]:
     """Flag placeholder bullet text (`keypoint1`, `Put questions here`, ...)
     left inside `questions`/`objectives`/`keypoints` blocks. The block itself
     existing satisfies `_check_divs`'s required-block check, so this is the
@@ -641,12 +642,15 @@ def _check_placeholder_bullets(body: str, location: str) -> list[Finding]:
         bullet_raw = stripped[marker_match.end():].strip()
         normalized = _normalize_bullet_text(bullet_raw)
         if _is_placeholder_bullet(normalized.lower()):
+            reported_line = i + 1 + line_offset
             findings.append(
                 Finding(
                     "error",
                     "boilerplate",
-                    f'`{tracked_type}` still has placeholder bullet text: "{bullet_raw}"',
+                    f'`{tracked_type}` still has placeholder bullet text on line '
+                    f'{reported_line}: "{bullet_raw}"',
                     location=location,
+                    line=reported_line,
                     hint="[CLDT] Replace with real content, this is scaffold placeholder "
                     "text, not a written keypoint/objective/question.",
                 )
@@ -715,6 +719,7 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                         f"unrecognized div type `{div_type}` on line {lineno + line_offset}"
                         " -- verify against the Workbench style guide",
                         location=location,
+                        line=lineno + line_offset,
                         hint="See https://carpentries.github.io/sandpaper-docs/episodes.html "
                         "for the full list of recognized div types.",
                     )
@@ -728,6 +733,7 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                         f"extraneous closing `:::` on line {lineno + line_offset} with no "
                         "matching open div",
                         location=location,
+                        line=lineno + line_offset,
                         hint="Either this fence has no matching opening `::: type` above it, "
                         "or an earlier div's closing fence was deleted, causing this one to "
                         "close the wrong block. Check the div immediately above.",
@@ -743,6 +749,7 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                 "divs",
                 f"`{div_type}` div opened on line {lineno + line_offset} is never closed",
                 location=location,
+                line=lineno + line_offset,
                 hint="Add a closing `:::` fence (same or more colons than the opening "
                 "fence) before the next block starts. An unclosed div silently swallows "
                 "everything after it, including blocks that look fine on their own, "
@@ -792,6 +799,7 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"level-1 heading `# {text}` on line {reported_line}"
                     " -- episodes must not use H1, start at H2",
                     location=location,
+                    line=reported_line,
                 )
             )
         elif not first_heading_seen and level != 2:
@@ -802,6 +810,7 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"first heading `{'#' * level} {text}` on line {reported_line} is level "
                     f"{level}, expected level 2",
                     location=location,
+                    line=reported_line,
                 )
             )
 
@@ -816,6 +825,7 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"heading `{text}` on line {reported_line} duplicates the one on line "
                     f"{seen[text]}",
                     location=location,
+                    line=reported_line,
                 )
             )
         else:
@@ -841,6 +851,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f"image on line {lineno} has no alt text: `{path}`",
                         location=location,
+                        line=lineno,
                         hint="Add descriptive alt text for accessibility.",
                     )
                 )
@@ -856,6 +867,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                             "links",
                             f"image on line {lineno} points to a missing file: `{path}`",
                             location=location,
+                            line=lineno,
                             hint="Check the path is relative to episodes/ (images "
                             "typically live in episodes/fig/), and that the file was "
                             "actually committed.",
@@ -870,6 +882,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f'generic link text "{text}" on line {lineno}',
                         location=location,
+                        line=lineno,
                         hint="[CLDT/Carpentries Lab] Screen readers and translation tools "
                         "lose context with generic link text like 'click here' -- "
                         "describe the destination.",
@@ -899,6 +912,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f"internal link on line {lineno} may be broken: `{path}`",
                         location=location,
+                        line=lineno,
                         hint="Confirm the target exists relative to episodes/, the "
                         "lesson root, or learners/, instructors/, profiles/. A link to "
                         "another episode's rendered .html targets its .md source.",
@@ -941,7 +955,7 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_headings(body, location, line_offset))
     findings.extend(_check_links(body, lesson_dir, location, line_offset))
     findings.extend(_check_boilerplate(front_matter, body, location, line_offset))
-    findings.extend(_check_placeholder_bullets(body, location))
+    findings.extend(_check_placeholder_bullets(body, location, line_offset))
     objective_findings, objective_count = _check_objective_verbs(body, location)
     findings.extend(objective_findings)
     findings.extend(_check_contractions(body, location))

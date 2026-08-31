@@ -63,6 +63,10 @@ pixi run check ./my-lesson --format markdown --output report.md
 # a warning + the markdown file if you don't)
 pixi run check ./my-lesson --format markdown --output report.md --html
 
+# --open launches the rendered HTML in your default browser once it's built
+# (requires --html; a no-op warning otherwise)
+pixi run check ./my-lesson --format markdown --output report.md --html --open
+
 # One episode only
 pixi run check ./my-lesson --episode 03-sharing.md
 
@@ -78,6 +82,25 @@ pixi run check ./my-lesson --format markdown --blame --output report.md
 
 Exit code is `1` if any error-level finding was reported, `0` otherwise —
 safe to use in a pre-commit hook or your own CI step.
+
+### Reading the markdown/HTML report
+
+The markdown report (and the HTML built from it) opens with a **Files**
+checklist: one checkbox per location, with an issue count, linking down into
+that file's section, so you can track which files are cleared before you
+scroll through every finding. Each finding below that links back to its
+source: a real GitHub blob URL anchored to the line (`#L42`) when the lesson
+directory is a GitHub repo, plain `` `path:line` `` text otherwise. Terminal
+output gets the same line references as plain `path:line` tokens, which VS
+Code's integrated terminal (and several others) auto-links to jump straight
+to that line.
+
+Every finding whose category has a canonical Workbench/Carpentries doc
+(`config`, `front-matter`, `divs`, `headings`, `links`, `objectives`,
+`style`) links to it, either appended to the finding's own hint or standing
+in when there isn't one. `boilerplate` findings don't get one, since it's a
+check this tool invented rather than something sandpaper/pegboard document,
+so their instance-specific hints carry the explanation instead.
 
 ### Adding the AI narrative review
 

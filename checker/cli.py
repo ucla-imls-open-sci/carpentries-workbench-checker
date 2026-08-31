@@ -8,9 +8,11 @@ See README.md for the full flag reference and model recommendations.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import tempfile
+import webbrowser
 from pathlib import Path
 
 from checker.ai_review import BACKENDS, review_episode
@@ -118,6 +120,43 @@ def _blame_map(lesson_dir: Path, findings: list) -> dict[str, str]:
     return blame
 
 
+_GITHUB_REMOTE_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:)(?P<org>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$"
+)
+
+
+def _github_blob_base(lesson_dir: Path) -> str | None:
+    """`https://github.com/org/repo/blob/<current-sha>`, for turning
+    location:line references in the markdown report into real clickable
+    links. None if lesson_dir isn't a git repo, has no `origin` remote, that
+    remote isn't github.com, or either git call fails/times out -- callers
+    fall back to plain `path:line` text in every one of those cases, this
+    is a pure enhancement, never required."""
+    try:
+        remote = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=lesson_dir,
+            capture_output=True,
+            text=True,
+            timeout=_BLAME_TIMEOUT_SECONDS,
+        )
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=lesson_dir,
+            capture_output=True,
+            text=True,
+            timeout=_BLAME_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if remote.returncode != 0 or sha.returncode != 0:
+        return None
+    match = _GITHUB_REMOTE_RE.match(remote.stdout.strip())
+    if not match:
+        return None
+    return f"https://github.com/{match['org']}/{match['repo']}/blob/{sha.stdout.strip()}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: parse args, run checks, render/write the report,
     optionally run the AI review. Returns 1 if any error-level finding was
@@ -141,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
         "--html",
         action="store_true",
         help="also render the markdown report to HTML with Quarto, if installed",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="open the rendered HTML report in your default browser (requires --html)",
     )
     parser.add_argument(
         "--ai",
@@ -169,22 +213,27 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+        # Computed once, reused for both --format markdown and --html (HTML is
+        # rendered from markdown text, so links baked in here carry through).
+        github_base = _github_blob_base(lesson_dir)
+
         if args.format == "terminal":
             report_text = render_terminal(findings, title, blame=blame)
         elif args.format == "markdown":
-            report_text = render_markdown(findings, title, blame=blame)
+            report_text = render_markdown(findings, title, blame=blame, github_base=github_base)
         else:
             report_text = render_json(findings, title)
 
         _write_or_print(report_text, args.output)
 
         if args.html:
-            md_text = render_markdown(findings, title, blame=blame)
+            md_text = render_markdown(findings, title, blame=blame, github_base=github_base)
             out_path = Path(args.output).with_suffix(".html") if args.output else Path("report.html")
             try:
                 rendered = render_html_via_quarto(md_text, out_path)
             except RuntimeError as exc:
                 print(f"quarto render failed, skipping HTML output: {exc}", file=sys.stderr)
+                rendered = None
             else:
                 if rendered is None:
                     print(
@@ -194,6 +243,13 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 else:
                     print(f"wrote {rendered}", file=sys.stderr)
+            if args.open:
+                if rendered is not None:
+                    webbrowser.open(rendered.resolve().as_uri())
+                else:
+                    print("--open: no HTML file was rendered, nothing to open", file=sys.stderr)
+        elif args.open:
+            print("--open has no effect without --html", file=sys.stderr)
 
         if args.ai:
             episodes_dir = lesson_dir / "episodes"

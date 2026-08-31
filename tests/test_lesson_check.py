@@ -171,6 +171,15 @@ def test_divs_unclosed_is_error():
     assert any("never closed" in f.message for f in findings)
 
 
+def test_divs_unclosed_has_structured_line_number():
+    # The line field must be populated, not just embedded in the message --
+    # renderers need it as data to build clickable links.
+    body = ":::: challenge\nNo closing fence.\n"
+    findings = _check_divs(body, "ep.md")
+    matches = [f for f in findings if "never closed" in f.message]
+    assert matches and matches[0].line == 1
+
+
 def test_divs_extraneous_close_is_error():
     body = "Some text.\n:::\n"
     findings = _check_divs(body, "ep.md")
@@ -201,6 +210,12 @@ def test_headings_level_one_is_error():
     assert any(f.severity == "error" for f in findings)
 
 
+def test_headings_level_one_has_structured_line_number():
+    findings = _check_headings("# Top level\n\n## Ok\n", "ep.md")
+    matches = [f for f in findings if f.severity == "error"]
+    assert matches and matches[0].line == 1
+
+
 def test_headings_first_not_level_two_is_warning():
     findings = _check_headings("### Starts too deep\n", "ep.md")
     assert any("expected level 2" in f.message for f in findings)
@@ -229,6 +244,7 @@ def test_links_image_missing_alt_and_missing_file(tmp_path):
     messages = [f.message for f in findings]
     assert any("no alt text" in m for m in messages)
     assert any("missing file" in m for m in messages)
+    assert all(f.line == 1 for f in findings)
 
 
 def test_links_episode_relative_fig_image_resolves(tmp_path):
@@ -461,6 +477,7 @@ def test_placeholder_bullets_keypoint_variants_are_flagged():
     findings = _check_placeholder_bullets(body, "ep.md")
     assert len(findings) == 2
     assert all(f.severity == "error" for f in findings)
+    assert sorted(f.line for f in findings) == [2, 3]
 
 
 def test_placeholder_bullets_real_keypoint_is_silent():
