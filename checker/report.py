@@ -6,9 +6,11 @@ import json
 import shutil
 import subprocess
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from checker import __version__
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 SEVERITY_ICON = {"error": "\033[31m❌\033[0m", "warning": "\033[33m⚠️\033[0m", "info": "ℹ️"}
@@ -60,6 +62,30 @@ class Finding:
         )
 
 
+@dataclass
+class LessonMetadata:
+    """Lesson identity for the report header, read from config.yaml and (if
+    present) CITATION.cff -- see lesson_check.read_lesson_metadata(). Purely
+    descriptive context for whoever reads the report, not a check result;
+    every field is optional since not every lesson has all of this filled
+    in (or a CITATION.cff at all)."""
+
+    title: str | None = None
+    carpentry: str | None = None  # friendly name, e.g. "Library Carpentry"
+    life_cycle: str | None = None
+    license: str | None = None
+    source: str | None = None
+    contact: str | None = None
+    created: str | None = None
+    authors: list[str] = field(default_factory=list)
+
+    def has_content(self) -> bool:
+        """Whether there's anything worth rendering -- false when config.yaml
+        itself was missing or empty, so the header block can be skipped
+        entirely rather than printed blank."""
+        return bool(self.title or self.carpentry or self.source or self.authors)
+
+
 def summarize(findings: list[Finding]) -> dict[str, int]:
     """Count findings per severity."""
     counts = {"error": 0, "warning": 0, "info": 0}
@@ -106,14 +132,52 @@ def _markdown_location_link(location: str, line: int | None, github_base: str | 
     return f"`{label}`"
 
 
+def _lesson_metadata_lines(
+    metadata: LessonMetadata | None, bold_open: str = "", bold_close: str = ""
+) -> list[str]:
+    """Plain-text lesson-identity lines shared by terminal/markdown: title
+    (wrapped in the caller's own bold markup), carpentry/life cycle/license
+    tags, source repo, authors, contact. Empty list if there's nothing to
+    show -- e.g. config.yaml was missing or empty."""
+    if metadata is None or not metadata.has_content():
+        return []
+    lines = []
+    header_bits = []
+    if metadata.title:
+        header_bits.append(f"{bold_open}{metadata.title}{bold_close}")
+    tags = [t for t in (metadata.carpentry,) if t]
+    if metadata.life_cycle:
+        tags.append(f"life cycle: {metadata.life_cycle}")
+    if metadata.license:
+        tags.append(f"license: {metadata.license}")
+    if tags:
+        header_bits.append(f"({', '.join(tags)})")
+    if header_bits:
+        lines.append(" ".join(header_bits))
+    if metadata.source:
+        lines.append(f"Source: {metadata.source}")
+    if metadata.authors:
+        lines.append(f"Authors: {', '.join(metadata.authors)}")
+    if metadata.contact:
+        lines.append(f"Contact: {metadata.contact}")
+    return lines
+
+
 def render_terminal(
-    findings: list[Finding], title: str, blame: dict[str, str] | None = None
+    findings: list[Finding],
+    title: str,
+    blame: dict[str, str] | None = None,
+    metadata: LessonMetadata | None = None,
 ) -> str:
     """Colored, grouped-by-location report for a terminal."""
     lines = [f"\033[1m{title}\033[0m"]
+    lines.extend(_lesson_metadata_lines(metadata, bold_open="\033[1m", bold_close="\033[0m"))
+    if metadata is not None and metadata.has_content():
+        lines.append("")
     counts = summarize(findings)
     lines.append(
-        f"{counts['error']} error(s), {counts['warning']} warning(s), {counts['info']} note(s)"
+        f"carpentries-workbench-checker v{__version__} · {counts['error']} error(s), "
+        f"{counts['warning']} warning(s), {counts['info']} note(s)"
     )
     if not findings:
         lines.append("\033[32m✅ No issues found\033[0m")
@@ -141,22 +205,32 @@ def render_markdown(
     title: str,
     blame: dict[str, str] | None = None,
     github_base: str | None = None,
+    metadata: LessonMetadata | None = None,
 ) -> str:
     """Checkbox-list report per location, ready to paste into a PR/issue.
 
     `github_base` (e.g. `https://github.com/org/repo/blob/<sha>`), when
     given, turns every location:line reference into a real clickable GitHub
-    link instead of plain text -- see `cli._github_blob_base`.
+    link instead of plain text -- see `cli._github_blob_base`. `metadata`
+    (see `LessonMetadata`), when given, adds a lesson-identity block (title,
+    carpentry, authors, ...) below the report title.
     """
     counts = summarize(findings)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines = [
-        f"# {title}",
-        "",
-        f"Generated {generated} · {counts['error']} error(s), "
-        f"{counts['warning']} warning(s), {counts['info']} note(s)",
-        "",
-    ]
+    lines = [f"# {title}", ""]
+    metadata_lines = _lesson_metadata_lines(metadata, bold_open="**", bold_close="**")
+    if metadata_lines:
+        # Trailing double-space = a CommonMark/GFM hard line break, so these
+        # render as separate lines instead of collapsing into one reflowed
+        # paragraph (Markdown treats consecutive non-blank lines as the same
+        # paragraph otherwise).
+        lines.extend(f"{line}  " for line in metadata_lines)
+        lines.append("")
+    lines.append(
+        f"Generated {generated} by carpentries-workbench-checker v{__version__} · "
+        f"{counts['error']} error(s), {counts['warning']} warning(s), {counts['info']} note(s)"
+    )
+    lines.append("")
     if not findings:
         lines.append("All checks passed. Nothing to address before opening a PR.")
         return "\n".join(lines) + "\n"
@@ -203,11 +277,15 @@ def _anchor(location: str) -> str:
     return slug.replace(" ", "-")
 
 
-def render_json(findings: list[Finding], title: str) -> str:
+def render_json(
+    findings: list[Finding], title: str, metadata: LessonMetadata | None = None
+) -> str:
     """Machine-readable report, e.g. for a caller's own CI step."""
     payload = {
         "title": title,
         "generated": datetime.now(timezone.utc).isoformat(),
+        "generated_by": {"name": "carpentries-workbench-checker", "version": __version__},
+        "lesson": asdict(metadata) if metadata is not None else None,
         "summary": summarize(findings),
         "findings": [asdict(f) for f in findings],
     }

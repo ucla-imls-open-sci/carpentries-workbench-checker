@@ -23,6 +23,7 @@ from checker.lesson_check import (
     check_config,
     check_episode,
     check_support_files,
+    read_lesson_metadata,
     resolve_glossary_path,
 )
 
@@ -708,3 +709,73 @@ def test_check_episode_reports_real_file_line_numbers_not_body_relative(tmp_path
     heading_findings = [f for f in findings if "Stray H1" in f.message]
     assert heading_findings, "expected a level-1 heading finding"
     assert f"line {real_line}" in heading_findings[0].message
+
+
+# -- read_lesson_metadata ---------------------------------------------------
+
+
+def test_read_lesson_metadata_full_config_and_citation(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        "title: 'Python Intro'\n"
+        "carpentry: 'lc'\n"
+        "life_cycle: 'beta'\n"
+        "license: 'CC-BY 4.0'\n"
+        "source: 'https://github.com/org/repo'\n"
+        "contact: 'team@example.org'\n"
+        "created: '2020-01-01'\n"
+    )
+    (tmp_path / "CITATION.cff").write_text(
+        "authors:\n"
+        "  - family-names: Hennesy\n"
+        "    given-names: Cody\n"
+        "  - family-names: Org\n"
+        "    given-names: An\n"
+    )
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title == "Python Intro"
+    assert metadata.carpentry == "Library Carpentry"
+    assert metadata.life_cycle == "beta"
+    assert metadata.license == "CC-BY 4.0"
+    assert metadata.source == "https://github.com/org/repo"
+    assert metadata.contact == "team@example.org"
+    assert metadata.created == "2020-01-01"
+    assert metadata.authors == ["Cody Hennesy", "An Org"]
+
+
+def test_read_lesson_metadata_no_config_or_citation_is_empty(tmp_path):
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title is None
+    assert metadata.authors == []
+    assert metadata.has_content() is False
+
+
+def test_read_lesson_metadata_missing_citation_leaves_authors_empty(tmp_path):
+    (tmp_path / "config.yaml").write_text("title: 'Some Lesson'\ncarpentry: 'dc'\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title == "Some Lesson"
+    assert metadata.carpentry == "Data Carpentry"
+    assert metadata.authors == []
+    assert metadata.has_content() is True
+
+
+def test_read_lesson_metadata_citation_entity_author_uses_name_field(tmp_path):
+    # CFF allows an "entity" author (an organization) via `name` instead of
+    # the usual given-names/family-names pair.
+    (tmp_path / "config.yaml").write_text("title: 'Some Lesson'\n")
+    (tmp_path / "CITATION.cff").write_text("authors:\n  - name: The Carpentries\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.authors == ["The Carpentries"]
+
+
+def test_read_lesson_metadata_unknown_carpentry_code_passes_through(tmp_path):
+    (tmp_path / "config.yaml").write_text("carpentry: 'xyz'\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.carpentry == "xyz"
+
+
+def test_read_lesson_metadata_malformed_yaml_is_empty_not_a_crash(tmp_path):
+    (tmp_path / "config.yaml").write_text("title: [unterminated\n")
+    (tmp_path / "CITATION.cff").write_text("authors: [unterminated\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title is None
+    assert metadata.authors == []

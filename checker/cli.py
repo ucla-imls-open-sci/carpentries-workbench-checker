@@ -18,6 +18,7 @@ from pathlib import Path
 from checker.ai_review import BACKENDS, review_episode
 from checker.lesson_check import (
     GLOSSARY_PLACEHOLDER_FINGERPRINT,
+    read_lesson_metadata,
     resolve_glossary_path,
     run_checks,
 )
@@ -226,22 +227,27 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
-        # Computed once, reused for both --format markdown and --html (HTML is
-        # rendered from markdown text, so links baked in here carry through).
+        # Computed once, reused across every output format: who/what the
+        # report is for, and (for markdown/html) how to link back to source.
+        metadata = read_lesson_metadata(lesson_dir)
         github_base = _github_blob_base(lesson_dir)
 
         if args.format == "terminal":
-            report_text = render_terminal(findings, title, blame=blame)
+            report_text = render_terminal(findings, title, blame=blame, metadata=metadata)
         elif args.format == "markdown":
-            report_text = render_markdown(findings, title, blame=blame, github_base=github_base)
+            report_text = render_markdown(
+                findings, title, blame=blame, github_base=github_base, metadata=metadata
+            )
         else:
-            report_text = render_json(findings, title)
+            report_text = render_json(findings, title, metadata=metadata)
 
         _write_or_print(report_text, args.output)
 
         rendered_html = None
         if args.html or args.pdf:
-            md_text = render_markdown(findings, title, blame=blame, github_base=github_base)
+            md_text = render_markdown(
+                findings, title, blame=blame, github_base=github_base, metadata=metadata
+            )
 
             if args.html:
                 out_path = (

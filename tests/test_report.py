@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from checker.report import Finding, render_markdown, render_terminal
+import json
+
+from checker import __version__
+from checker.report import Finding, LessonMetadata, render_json, render_markdown, render_terminal
 
 
 def test_render_markdown_blame_annotates_heading():
@@ -134,3 +137,82 @@ def test_render_markdown_files_section_links_match_heading_anchors():
     text = render_markdown(findings, "Report")
     assert "(#episodes01-intromd)" in text
     assert "## episodes/01-intro.md" in text
+
+
+# -- tool version + lesson metadata in the report header ---------------------
+
+
+def _sample_metadata() -> LessonMetadata:
+    return LessonMetadata(
+        title="Python Intro for Libraries",
+        carpentry="Library Carpentry",
+        life_cycle="beta",
+        license="CC-BY 4.0",
+        source="https://github.com/org/repo",
+        contact="team@example.org",
+        created="2020-01-01",
+        authors=["Cody Hennesy", "Tim Dennis"],
+    )
+
+
+def test_render_markdown_includes_tool_version():
+    text = render_markdown([], "Report")
+    assert f"carpentries-workbench-checker v{__version__}" in text
+
+
+def test_render_terminal_includes_tool_version():
+    text = render_terminal([], "Report")
+    assert f"carpentries-workbench-checker v{__version__}" in text
+
+
+def test_render_markdown_no_metadata_omits_lesson_block():
+    text = render_markdown([], "Report")
+    assert "Authors:" not in text
+    assert "Source:" not in text
+
+
+def test_render_markdown_empty_metadata_omits_lesson_block():
+    text = render_markdown([], "Report", metadata=LessonMetadata())
+    assert "Authors:" not in text
+    assert "Source:" not in text
+
+
+def test_render_markdown_metadata_includes_lesson_identity():
+    text = render_markdown([], "Report", metadata=_sample_metadata())
+    assert "**Python Intro for Libraries**" in text
+    assert "Library Carpentry" in text
+    assert "life cycle: beta" in text
+    assert "license: CC-BY 4.0" in text
+    assert "Source: https://github.com/org/repo" in text
+    assert "Authors: Cody Hennesy, Tim Dennis" in text
+    assert "Contact: team@example.org" in text
+
+
+def test_render_terminal_metadata_includes_lesson_identity():
+    text = render_terminal([], "Report", metadata=_sample_metadata())
+    assert "Python Intro for Libraries" in text
+    assert "Authors: Cody Hennesy, Tim Dennis" in text
+
+
+def test_render_markdown_metadata_partial_fields_only_shows_present_ones():
+    metadata = LessonMetadata(title="Some Lesson")
+    text = render_markdown([], "Report", metadata=metadata)
+    assert "**Some Lesson**" in text
+    assert "Authors:" not in text
+    assert "Source:" not in text
+    assert "Contact:" not in text
+
+
+def test_render_json_includes_generated_by_and_lesson():
+    payload = json.loads(render_json([], "Report", metadata=_sample_metadata()))
+    assert payload["generated_by"] == {
+        "name": "carpentries-workbench-checker",
+        "version": __version__,
+    }
+    assert payload["lesson"]["title"] == "Python Intro for Libraries"
+    assert payload["lesson"]["authors"] == ["Cody Hennesy", "Tim Dennis"]
+
+
+def test_render_json_no_metadata_lesson_is_none():
+    payload = json.loads(render_json([], "Report"))
+    assert payload["lesson"] is None

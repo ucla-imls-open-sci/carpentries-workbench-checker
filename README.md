@@ -90,6 +90,14 @@ safe to use in a pre-commit hook or your own CI step.
 
 ### Reading the markdown/HTML report
 
+Every report format (terminal, markdown, JSON) opens with which tool
+generated it (`carpentries-workbench-checker vX.Y.Z`) and, when
+`config.yaml` and `CITATION.cff` are present, who and what it's about:
+lesson title, carpentry, life cycle, license, source repo, authors, and
+contact -- so a report handed to someone else identifies itself and the
+lesson without extra context. Missing fields (no `CITATION.cff`, an empty
+`config.yaml`) just drop from the block rather than showing blank lines.
+
 The markdown report (and the HTML built from it) opens with a **Files**
 checklist: one checkbox per location, with an issue count, linking down into
 that file's section, so you can track which files are cleared before you

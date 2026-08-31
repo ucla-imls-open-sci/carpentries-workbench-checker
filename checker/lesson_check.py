@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from checker.report import Finding
+from checker.report import Finding, LessonMetadata
 
 REQUIRED_TOP_DIVS = ("questions", "objectives", "keypoints")
 
@@ -37,6 +37,15 @@ KNOWN_DIV_TYPES = {
     "hint",
     "tab",
     "group-tab",
+}
+
+# config.yaml's `carpentry:` code -> the full org name, for the report header.
+CARPENTRY_NAMES = {
+    "lc": "Library Carpentry",
+    "dc": "Data Carpentry",
+    "swc": "Software Carpentry",
+    "cp": "The Carpentries",
+    "incubator": "The Carpentries Incubator",
 }
 
 CONFIG_PLACEHOLDER_VALUES = {
@@ -371,6 +380,52 @@ def check_config(lesson_dir: Path) -> list[Finding]:
         )
 
     return findings
+
+
+def read_lesson_metadata(lesson_dir: Path) -> LessonMetadata:
+    """Lesson identity for the report header: title, carpentry, life cycle,
+    license, source repo, contact, and authors, from config.yaml and (if
+    present) CITATION.cff. Best-effort -- missing or unparseable files just
+    leave those fields empty; this is descriptive context for a report
+    header, not a check that should fail the run, so it deliberately doesn't
+    raise or return Findings the way check_config() does."""
+    metadata = LessonMetadata()
+
+    config_path = lesson_dir / "config.yaml"
+    if config_path.exists():
+        try:
+            config = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError:
+            config = {}
+        carpentry_code = config.get("carpentry") or None
+        metadata.title = config.get("title") or None
+        metadata.carpentry = (
+            CARPENTRY_NAMES.get(carpentry_code, carpentry_code) if carpentry_code else None
+        )
+        metadata.life_cycle = config.get("life_cycle") or None
+        metadata.license = config.get("license") or None
+        metadata.source = config.get("source") or None
+        metadata.contact = config.get("contact") or None
+        metadata.created = config.get("created") or None
+
+    citation_path = lesson_dir / "CITATION.cff"
+    if citation_path.exists():
+        try:
+            citation = yaml.safe_load(citation_path.read_text()) or {}
+        except yaml.YAMLError:
+            citation = {}
+        for entry in citation.get("authors") or []:
+            if not isinstance(entry, dict):
+                continue
+            # CFF allows an "entity" author (an organization) via `name`,
+            # instead of the usual given-names/family-names pair.
+            name = entry.get("name") or " ".join(
+                part for part in (entry.get("given-names"), entry.get("family-names")) if part
+            )
+            if name:
+                metadata.authors.append(name)
+
+    return metadata
 
 
 def check_support_files(lesson_dir: Path) -> list[Finding]:
