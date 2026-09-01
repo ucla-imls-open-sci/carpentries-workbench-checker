@@ -880,6 +880,8 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"heading `{text}` on line {reported_line} duplicates the one on line "
                     f"{seen[text]}",
                     location=location,
+                    hint="Give each challenge/solution/exercise a unique, descriptive heading "
+                    "instead of reusing a generic one.",
                     line=reported_line,
                 )
             )

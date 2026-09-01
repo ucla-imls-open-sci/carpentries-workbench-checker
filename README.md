@@ -102,22 +102,39 @@ cover/metadata title) is the lesson's title too, not a generic "Lesson
 Check Report" -- it falls back to that generic title only when
 `config.yaml` has none.
 
-The markdown report (and the HTML built from it) opens with a **Files**
-checklist: one checkbox per location, with an issue count, linking down into
-that file's section, so you can track which files are cleared before you
-scroll through every finding. Each finding below that links back to its
-source: a real GitHub blob URL anchored to the line (`#L42`) when the lesson
-directory is a GitHub repo, plain `` `path:line` `` text otherwise. Terminal
-output gets the same line references as plain `path:line` tokens, which VS
-Code's integrated terminal (and several others) auto-links to jump straight
-to that line.
+The markdown report (and the HTML/PDF built from it) has three parts:
+
+1. **Files** -- one checkbox per location with an issue count, linking down
+   into that file's own section, for file-level triage before reading detail.
+2. **Action summary** -- a table, one row per *shared fix* across the whole
+   lesson (same category, same exact hint text), not one row per finding.
+   A problem repeated many times (the same duplicate-heading warning in 16
+   places) shows up as one row with `Occurrences: 16`, not 16 near-identical
+   lines -- this is what actually answers "what's off, what needs to
+   change" at a glance, which per-finding detail can't.
+3. **Per-file detail**, one `## location` section per file (matching the
+   order you'd actually fix things in an editor). Within a file, findings
+   that share an exact `hint` still collapse into one `**Change:**` +
+   occurrence checklist instead of N separate cards, closed with a single
+   `**Guide:**` link -- so a file with 8 findings that are really "one
+   repeated problem + two one-offs" reads as 3 blocks, not 8 lines.
 
 Every finding whose category has a canonical Workbench/Carpentries doc
 (`config`, `front-matter`, `divs`, `headings`, `links`, `objectives`,
-`style`) links to it, either appended to the finding's own hint or standing
-in when there isn't one. `boilerplate` findings don't get one, since it's a
-check this tool invented rather than something sandpaper/pegboard document,
-so their instance-specific hints carry the explanation instead.
+`style`) links to it via that `**Guide:**` line. `boilerplate` findings
+don't get one, since it's a check this tool invented rather than something
+sandpaper/pegboard document, so their instance-specific hints carry the
+explanation instead. Each occurrence line links back to its source: a real
+GitHub blob URL anchored to the line (`#L42`) when the lesson directory is
+a GitHub repo, plain `` `path:line` `` text otherwise. Terminal output gets
+the same line references as plain `path:line` tokens, which VS Code's
+integrated terminal (and several others) auto-links to jump straight to
+that line.
+
+This structure (file-level triage, then a cross-file pattern summary, then
+file-first detail with same-fix collapsing) came out of a `/validate-external`
+round on the original per-finding-per-line design -- see
+[`design/validation-prompt-report-scannability-2026-08-31.md`](design/validation-prompt-report-scannability-2026-08-31.md).
 
 `--pdf` renders the same markdown through Quarto with a `pdf` target instead
 of `html` -- same checklist, same clickable links (as real hyperlinks, not

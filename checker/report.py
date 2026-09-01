@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -202,6 +203,88 @@ def render_terminal(
     return "\n".join(lines)
 
 
+_ANCHOR_STRIP_RE = re.compile(r"[^\w\s-]", re.UNICODE)
+
+
+def _anchor(text: str) -> str:
+    """Best-effort GitHub-flavored-markdown heading anchor: lowercase, strip
+    everything except word characters/spaces/hyphens, then spaces -> hyphens.
+    Used for file-path headings (`episodes/01-intro.md` -> a slug with no
+    `/`/`.`), matching GitHub's own algorithm closely enough for the paths
+    that actually appear here."""
+    slug = _ANCHOR_STRIP_RE.sub("", text.lower())
+    return re.sub(r"\s+", "-", slug.strip())
+
+
+def _group_by_category_and_hint(
+    items: list[Finding],
+) -> list[tuple[str, str | None, list[Finding]]]:
+    """Findings grouped by (category, exact shared `hint` text), largest
+    group first. Findings with no hint never merge with each other just
+    because both lack one -- each stays its own singleton, since two
+    unrelated problems that both happen to lack a hint are not the same
+    fix. Grouping is keyed on the literal `hint` string, not a stripped/
+    normalized `message` -- normalizing message text is what would
+    eventually merge unrelated findings or silently stop grouping when
+    wording changes elsewhere. Shared by the cross-file Action Summary
+    table and each file's detail section."""
+    hinted: dict[tuple[str, str], list[Finding]] = {}
+    singles: list[Finding] = []
+    for f in items:
+        if f.hint:
+            hinted.setdefault((f.category, f.hint), []).append(f)
+        else:
+            singles.append(f)
+    groups = sorted(hinted.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    result: list[tuple[str, str | None, list[Finding]]] = [
+        (category, hint, group_items) for (category, hint), group_items in groups
+    ]
+    result += [(f.category, None, [f]) for f in singles]
+    return result
+
+
+def _grouped_sections(
+    findings: list[Finding],
+) -> list[tuple[str, str, str | None, list[Finding]]]:
+    """Findings grouped into (severity, category, hint) patterns for the
+    Action Summary table: one row per exact shared corrective action,
+    ordered by severity (errors, then warnings, then notes), largest
+    pattern first within a severity. See `_group_by_category_and_hint` for
+    how a shared fix is identified."""
+    by_severity: dict[str, list[Finding]] = {}
+    for f in sorted(findings, key=Finding.sort_key):
+        by_severity.setdefault(f.severity, []).append(f)
+
+    sections = []
+    for severity, items in by_severity.items():
+        for category, hint, group_items in _group_by_category_and_hint(items):
+            sections.append((severity, category, hint, group_items))
+
+    sections.sort(key=lambda s: (SEVERITY_ORDER.get(s[0], 9), -len(s[3]), s[1]))
+    return sections
+
+
+def _render_file_finding_group(
+    hint: str | None, items: list[Finding], github_base: str | None, guide_link: str
+) -> list[str]:
+    """One blockquote within a file's section: a shared fix (if `hint` is
+    set) leading a checklist of every line in *this file* it applies to, or
+    -- for a hint-less singleton -- just that one finding. Each occurrence
+    line carries its own severity icon (a file section can mix severities,
+    unlike the old severity-scoped design). The guide link (once, not once
+    per occurrence) closes the block."""
+    lines = [f"> **Change:** {hint}", ">"] if hint else []
+    for f in items:
+        icon = SEVERITY_ICON_PLAIN.get(f.severity, "")
+        prefix = "- [ ]" if f.severity in ("error", "warning") else "-"
+        where = _markdown_location_link(f.location or "General", f.line, github_base)
+        lines.append(f"> {prefix} {icon} {where} — {f.message}")
+    if guide_link:
+        lines.append(">")
+        lines.append(f"> **Guide:**{guide_link}")
+    return lines
+
+
 def render_markdown(
     findings: list[Finding],
     title: str,
@@ -209,7 +292,13 @@ def render_markdown(
     github_base: str | None = None,
     metadata: LessonMetadata | None = None,
 ) -> str:
-    """Checkbox-list report per location, ready to paste into a PR/issue.
+    """PR/issue-ready report: a file-level checklist for triage, an Action
+    Summary of every shared fix pattern across the whole lesson (so a
+    repeated problem, e.g. 16 duplicate-heading warnings, is visible as one
+    row instead of scattered lines), then findings grouped file-first --
+    matching the order someone actually fixes them in an editor -- with
+    same-fix findings inside a file still collapsed into one change/
+    checklist rather than N separate cards.
 
     `github_base` (e.g. `https://github.com/org/repo/blob/<sha>`), when
     given, turns every location:line reference into a real clickable GitHub
@@ -241,8 +330,9 @@ def render_markdown(
     for f in sorted(findings, key=Finding.sort_key):
         by_location.setdefault(f.location or "General", []).append(f)
 
-    # File-level overview: one checkbox per location so progress is visible
-    # at a glance before scrolling into per-finding detail.
+    # File-level overview: which files need attention, linking down to that
+    # file's own detail section (file-first grouping below means a file
+    # again corresponds to exactly one section, same as pre-restructure).
     lines.append("## Files")
     lines.append("")
     for location, items in by_location.items():
@@ -252,31 +342,33 @@ def render_markdown(
         lines.append(f"{box} [{location}](#{_anchor(location)}) — {count_label}")
     lines.append("")
 
+    # Action summary: every shared-fix pattern across the whole lesson, so a
+    # problem repeated in many files (e.g. 16 duplicate-heading warnings) is
+    # visible as one row here even though the detail section below is
+    # file-first and will show it once per file. No deep links -- a
+    # cross-file pattern has no single section it "belongs" to.
+    lines.append("## Action summary")
+    lines.append("")
+    lines.append("| Priority | What to change | Occurrences | Files |")
+    lines.append("|---|---|---:|---:|")
+    for severity, _category, hint, items in _grouped_sections(findings):
+        icon = SEVERITY_ICON_PLAIN.get(severity, "")
+        what = hint or items[0].message
+        n_files = len({f.location for f in items if f.location})
+        lines.append(f"| {icon} {severity.capitalize()} | {what} | {len(items)} | {n_files} |")
+    lines.append("")
+
+    # Detail section: file-first, matching the order someone actually fixes
+    # things in an editor. Within a file, same-fix findings still collapse
+    # into one change/checklist instead of N separate cards.
     for location, items in by_location.items():
         lines.append(f"## {location}{_blame_suffix(location, blame)}")
         lines.append("")
-        for f in items:
-            icon = SEVERITY_ICON_PLAIN.get(f.severity, "")
-            box = "- [ ]" if f.severity in ("error", "warning") else "-"
-            where = _markdown_location_link(location, f.line, github_base)
-            entry = f"{box} {icon} {where} **{f.category}** — {f.message}"
-            lines.append(entry)
-            if f.hint:
-                lines.append(f"      *Fix:* {f.hint}{_guide_link_markdown(f.category)}")
-            elif f.category in CATEGORY_GUIDE_LINKS:
-                lines.append(f"      *Guide:*{_guide_link_markdown(f.category)}")
-        lines.append("")
+        for _category, hint, group_items in _group_by_category_and_hint(items):
+            guide_link = _guide_link_markdown(group_items[0].category)
+            lines.extend(_render_file_finding_group(hint, group_items, github_base, guide_link))
+            lines.append("")
     return "\n".join(lines)
-
-
-def _anchor(location: str) -> str:
-    """Best-effort GitHub-flavored-markdown heading anchor for a `## location`
-    heading, used by the file-overview checklist's links. GFM lowercases,
-    strips non-word/non-hyphen/non-space characters, and turns spaces into
-    hyphens; this covers lesson-path headings (letters, digits, `/`, `.`,
-    `-`, `_`), which is everything that actually appears here."""
-    slug = location.lower().replace("/", "").replace(".", "").replace("_", "-")
-    return slug.replace(" ", "-")
 
 
 def render_json(

@@ -11,6 +11,8 @@ from checker.report import (
     _EXTENSION_SRC,
     Finding,
     LessonMetadata,
+    _anchor,
+    _grouped_sections,
     render_json,
     render_markdown,
     render_terminal,
@@ -30,14 +32,14 @@ def test_render_markdown_blame_annotates_heading():
 def test_render_markdown_no_blame_arg_is_unchanged():
     findings = [Finding("error", "boilerplate", "still scaffold", location="episodes/ep.md")]
     text = render_markdown(findings, "Report")
-    assert "## episodes/ep.md\n" in text
+    assert "episodes/ep.md" in text
     assert "last change authored by" not in text
 
 
 def test_render_markdown_blame_missing_location_is_silent():
     findings = [Finding("error", "boilerplate", "still scaffold", location="episodes/ep.md")]
     text = render_markdown(findings, "Report", blame={"episodes/other.md": "Someone Else"})
-    assert "## episodes/ep.md\n" in text
+    assert "episodes/ep.md" in text
     assert "last change authored by" not in text
 
 
@@ -139,13 +141,159 @@ def test_render_markdown_files_section_lists_each_location_with_issue_count():
     assert "- [episodes/02-more.md](#episodes02-moremd) — 1 note(s) only" in text
 
 
-def test_render_markdown_files_section_links_match_heading_anchors():
-    # GFM would slugify "## episodes/01-intro.md" to this anchor -- the
-    # checklist's link target must actually match what GitHub renders.
+def test_render_markdown_files_section_links_match_detail_section_heading():
+    # File-first grouping means a file corresponds to exactly one detail
+    # section again -- the checklist's anchor link must match what GitHub
+    # would slugify that section's `## episodes/01-intro.md` heading to.
     findings = [Finding("error", "headings", "bad heading", location="episodes/01-intro.md")]
     text = render_markdown(findings, "Report")
     assert "(#episodes01-intromd)" in text
     assert "## episodes/01-intro.md" in text
+
+
+# -- severity/category/shared-fix grouping ------------------------------------
+#
+# The core of this round: 14 findings sharing one root cause should read as
+# one change applied in 14 places, not 14 visually-identical scattered
+# lines. See design/validation-prompt-report-scannability-2026-08-31.md.
+
+
+def test_grouped_sections_merges_findings_sharing_identical_hint():
+    findings = [
+        Finding("warning", "headings", "dup A", location="ep.md", hint="Use a unique heading."),
+        Finding("warning", "headings", "dup B", location="ep.md", hint="Use a unique heading."),
+        Finding("warning", "headings", "dup C", location="ep2.md", hint="Use a unique heading."),
+    ]
+    sections = _grouped_sections(findings)
+    assert len(sections) == 1
+    severity, category, hint, items = sections[0]
+    assert (severity, category, hint) == ("warning", "headings", "Use a unique heading.")
+    assert len(items) == 3
+
+
+def test_grouped_sections_does_not_merge_different_hints_in_same_category():
+    findings = [
+        Finding("warning", "headings", "a", location="ep.md", hint="Fix A"),
+        Finding("warning", "headings", "b", location="ep.md", hint="Fix B"),
+    ]
+    sections = _grouped_sections(findings)
+    assert len(sections) == 2
+    assert {hint for _, _, hint, _ in sections} == {"Fix A", "Fix B"}
+
+
+def test_grouped_sections_never_merges_hint_less_findings():
+    # Two unrelated problems that both happen to lack a hint are not the
+    # same fix -- each must stay its own singleton, not collapse into one
+    # group just because hint is None for both.
+    findings = [
+        Finding("warning", "headings", "unrelated problem one", location="ep.md"),
+        Finding("warning", "headings", "unrelated problem two", location="ep.md"),
+    ]
+    sections = _grouped_sections(findings)
+    assert len(sections) == 2
+    assert all(hint is None for _, _, hint, _ in sections)
+    assert {items[0].message for _, _, _, items in sections} == {
+        "unrelated problem one",
+        "unrelated problem two",
+    }
+
+
+def test_grouped_sections_orders_severity_errors_before_warnings_before_info():
+    findings = [
+        Finding("info", "style", "note", location="ep.md"),
+        Finding("error", "config", "bad config", location="config.yaml"),
+        Finding("warning", "links", "bad link", location="ep.md"),
+    ]
+    sections = _grouped_sections(findings)
+    assert [severity for severity, _, _, _ in sections] == ["error", "warning", "info"]
+
+
+def test_render_markdown_shared_hint_group_shows_guide_once_not_per_occurrence():
+    findings = [
+        Finding("warning", "headings", "dup A", location="ep.md", line=1, hint="Use a unique heading."),
+        Finding("warning", "headings", "dup B", location="ep.md", line=2, hint="Use a unique heading."),
+    ]
+    text = render_markdown(findings, "Report")
+    assert text.count("**Guide:**") == 1
+    assert text.count("**Change:** Use a unique heading.") == 1
+    # occurrence checklist still present, one line per finding (plus the
+    # unrelated Files-section checkbox for this same file, hence 3 not 2)
+    assert text.count("> - [ ]") == 2
+    assert text.count("- [ ]") == 3
+
+
+def test_render_markdown_hint_less_finding_has_no_change_line():
+    findings = [Finding("warning", "headings", "some problem", location="ep.md")]
+    text = render_markdown(findings, "Report")
+    assert "**Change:**" not in text
+
+
+def test_render_markdown_boilerplate_group_has_no_guide_line():
+    findings = [Finding("warning", "boilerplate", "still scaffold", location="ep.md")]
+    text = render_markdown(findings, "Report")
+    assert "**Guide:**" not in text
+
+
+def test_render_markdown_action_summary_has_one_row_per_shared_fix():
+    # Repeated problem: 3 occurrences of the same fix in different files
+    # should be one Action Summary row with Occurrences=3, Files=2 -- not
+    # 3 separate rows.
+    findings = [
+        Finding("warning", "headings", "dup A", location="ep.md", hint="Use a unique heading."),
+        Finding("warning", "headings", "dup B", location="ep.md", hint="Use a unique heading."),
+        Finding("warning", "headings", "dup C", location="ep2.md", hint="Use a unique heading."),
+    ]
+    text = render_markdown(findings, "Report")
+    assert "| ⚠️ Warning | Use a unique heading. | 3 | 2 |" in text
+
+
+def test_render_markdown_action_summary_hint_less_row_uses_message():
+    findings = [Finding("error", "config", "bad config value", location="config.yaml")]
+    text = render_markdown(findings, "Report")
+    assert "| ❌ Error | bad config value | 1 | 1 |" in text
+
+
+def test_render_markdown_detail_section_is_file_first():
+    # Two files, each with one finding of a different category -- the
+    # detail section must group by file (one `## location` heading each),
+    # not by category, so someone editing one file sees everything about
+    # that file in one place.
+    findings = [
+        Finding("warning", "headings", "dup", location="a.md", hint="Fix headings"),
+        Finding("warning", "links", "bad link", location="b.md", hint="Fix links"),
+    ]
+    text = render_markdown(findings, "Report")
+    a_pos = text.index("## a.md")
+    b_pos = text.index("## b.md")
+    fix_headings_pos = text.index("**Change:** Fix headings")
+    fix_links_pos = text.index("**Change:** Fix links")
+    assert a_pos < fix_headings_pos < b_pos < fix_links_pos
+
+
+def test_render_markdown_file_section_collapses_same_fix_within_file():
+    findings = [
+        Finding("warning", "headings", "dup A", location="ep.md", line=1, hint="Use a unique heading."),
+        Finding("warning", "headings", "dup B", location="ep.md", line=2, hint="Use a unique heading."),
+        Finding("error", "links", "bad link", location="ep.md", line=3, hint="Fix the link."),
+    ]
+    text = render_markdown(findings, "Report")
+    # one file section, containing two Change groups (mixed severities)
+    assert text.count("## ep.md") == 1
+    assert text.count("**Change:** Use a unique heading.") == 1
+    assert text.count("**Change:** Fix the link.") == 1
+    assert "❌" in text  # the error occurrence's own icon, since severity
+    assert "⚠️" in text  # is no longer implied by an enclosing heading
+
+
+def test_anchor_handles_prose_headings_with_punctuation():
+    assert _anchor("Headings — 14 warning(s)") == "headings-14-warnings"
+
+
+def test_anchor_matches_old_path_slugification():
+    # Regression: the generalized _anchor() must still slugify a bare file
+    # path the same way GitHub does, since this behavior predates the
+    # prose-heading use case and other code may still rely on it.
+    assert _anchor("episodes/01-intro.md") == "episodes01-intromd"
 
 
 # -- tool version + lesson metadata in the report header ---------------------
