@@ -13,4 +13,8 @@ contributes:
     pdf:
       documentclass: article
       colorlinks: true
+      linkcolor: carpentriesnavy
+      urlcolor: carpentriesnavy
       geometry: margin=1in
+      header-includes:
+        - \definecolor{carpentriesnavy}{HTML}{071159}

@@ -9,3 +9,11 @@ extending Quarto's defaults with `toc: true` plus report-specific styling
 (`checker-report.scss` for HTML; margins/link color for PDF). Edit
 `_extension.yml`/`checker-report.scss` here to change how every rendered
 report looks; `report.py` itself only decides *what* the report says.
+
+Link color is The Carpentries' official navy (`#071159`) and the rule under
+each file heading is their red (`#FF4955`) -- see
+https://docs.carpentries.org/topic_folders/communications/resources/logos.html
+for the source. Colors only: the actual logo mark (github.com/carpentries/logo)
+ships with no LICENSE, and Carpentries' own docs require prior approval
+(community@carpentries.org) for any derived/modified use of the mark itself,
+so nothing from that repo is vendored here.

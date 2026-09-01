@@ -137,8 +137,12 @@ this happens automatically; nothing to install separately.
 
 The extension owns *how* every report looks (typography, link color, PDF
 margins/colorlinks, the rule under each `## file` heading); `report.py`
-still owns *what* it says. To change the report's appearance -- a different
-accent color, real Carpentries branding, a logo -- edit the extension, not
+still owns *what* it says. Colors are The Carpentries' own official values
+(navy `#071159` for links, red `#FF4955` for the file-heading rule -- see
+the extension's own README for sourcing); the logo mark itself isn't
+embedded since the logo repo ships with no license and Carpentries'
+own docs require prior approval to use a derived/modified copy of it.
+To change the report's appearance further, edit the extension, not
 `report.py`. `pixi run test` includes a couple of lightweight checks
 (`_extension.yml` exists and parses, declares both `html` and `pdf`) that
 don't need Quarto installed; they just guard against the extension

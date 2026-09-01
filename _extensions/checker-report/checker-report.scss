@@ -1,8 +1,16 @@
 /*-- scss:defaults --*/
 
+// The Carpentries' two official brand hex values (wrench-mark red, wordmark
+// navy) -- see https://docs.carpentries.org/topic_folders/communications/resources/logos.html.
+// Colors only, not the logo mark itself: the logo repo (github.com/carpentries/logo)
+// ships no LICENSE and Carpentries' own docs require prior approval for any
+// derived/modified use of the mark, so nothing from that repo is vendored here.
+$carpentries-red: #ff4955;
+$carpentries-navy: #071159;
+
 $body-line-height: 1.55;
 $font-family-monospace: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-$link-color: #1a5fb4;
+$link-color: $carpentries-navy;
 $headings-font-weight: 600;
 
 /*-- scss:rules --*/
@@ -12,7 +20,7 @@ $headings-font-weight: 600;
 h2 {
   margin-top: 2.5rem;
   padding-top: 0.75rem;
-  border-top: 1px solid #dee2e6;
+  border-top: 3px solid $carpentries-red;
 }
 
 h1 + p {
