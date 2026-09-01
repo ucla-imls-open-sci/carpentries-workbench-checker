@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from checker import __version__
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
@@ -292,7 +294,16 @@ def render_json(
     return json.dumps(payload, indent=2)
 
 
-def _render_via_quarto(markdown_text: str, out_path: Path, to: str, format_yaml: str) -> Path | None:
+# Pandoc format options per target, keyed the same as quarto's own `--to`.
+_QUARTO_FORMAT_OPTIONS: dict[str, dict] = {
+    "html": {"toc": True, "embed-resources": True},
+    "pdf": {"toc": True},
+}
+
+
+def _render_via_quarto(
+    markdown_text: str, out_path: Path, to: str, report_title: str
+) -> Path | None:
     """Shared by render_html_via_quarto/render_pdf_via_quarto: write the report
     as a .qmd with the given pandoc `format:` block, render it to `to`
     ("html"/"pdf"), and copy the result to out_path. Returns None if quarto
@@ -312,9 +323,15 @@ def _render_via_quarto(markdown_text: str, out_path: Path, to: str, format_yaml:
         # cwd we gave it, failing with a permission error on /private.
         tmp_dir = Path(tmp).resolve()
         qmd_path = tmp_dir / "report.qmd"
-        qmd_path.write_text(
-            f"---\ntitle: Lesson Check Report\nformat:\n{format_yaml}---\n\n" + markdown_text
+        # yaml.safe_dump, not an f-string, because report_title is a lesson's
+        # actual title -- arbitrary text that can contain colons, quotes, or
+        # unicode that would otherwise break the YAML front matter.
+        front_matter = yaml.safe_dump(
+            {"title": report_title, "format": {to: _QUARTO_FORMAT_OPTIONS[to]}},
+            sort_keys=False,
+            allow_unicode=True,
         )
+        qmd_path.write_text(f"---\n{front_matter}---\n\n" + markdown_text)
         result = subprocess.run(
             ["quarto", "render", str(qmd_path), "--to", to, "-o", out_path.name],
             cwd=tmp_dir,
@@ -328,19 +345,21 @@ def _render_via_quarto(markdown_text: str, out_path: Path, to: str, format_yaml:
     return out_path
 
 
-def render_html_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
+def render_html_via_quarto(
+    markdown_text: str, out_path: Path, report_title: str = "Lesson Check Report"
+) -> Path | None:
     """Render a markdown report to HTML with Quarto, if it's installed. See
     `_render_via_quarto` for the None/RuntimeError contract."""
-    return _render_via_quarto(
-        markdown_text, out_path, "html", "  html:\n    toc: true\n    embed-resources: true\n"
-    )
+    return _render_via_quarto(markdown_text, out_path, "html", report_title)
 
 
-def render_pdf_via_quarto(markdown_text: str, out_path: Path) -> Path | None:
+def render_pdf_via_quarto(
+    markdown_text: str, out_path: Path, report_title: str = "Lesson Check Report"
+) -> Path | None:
     """Render a markdown report to PDF with Quarto, if it's installed and a
     LaTeX distribution is available (`quarto install tinytex`, or an existing
     MacTeX/TeX Live install on PATH). See `_render_via_quarto` for the
     None/RuntimeError contract -- a missing LaTeX engine surfaces as a
     RuntimeError with quarto's own error text, not a silent None, since
     quarto being on PATH doesn't guarantee PDF rendering works."""
-    return _render_via_quarto(markdown_text, out_path, "pdf", "  pdf:\n    toc: true\n")
+    return _render_via_quarto(markdown_text, out_path, "pdf", report_title)

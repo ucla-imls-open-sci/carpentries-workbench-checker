@@ -248,13 +248,18 @@ def main(argv: list[str] | None = None) -> int:
             md_text = render_markdown(
                 findings, title, blame=blame, github_base=github_base, metadata=metadata
             )
+            # The document title Quarto puts in the browser tab / PDF cover --
+            # distinct from `title` above, which is the in-body H1 and already
+            # includes the target path; this is what identifies the lesson at
+            # a glance when the report's shared as a standalone file.
+            qmd_title = f"{metadata.title} — Lesson Check Report" if metadata.title else title
 
             if args.html:
                 out_path = (
                     Path(args.output).with_suffix(".html") if args.output else Path("report.html")
                 )
                 try:
-                    rendered_html = render_html_via_quarto(md_text, out_path)
+                    rendered_html = render_html_via_quarto(md_text, out_path, report_title=qmd_title)
                 except RuntimeError as exc:
                     print(f"quarto render failed, skipping HTML output: {exc}", file=sys.stderr)
                 else:
@@ -272,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                     Path(args.output).with_suffix(".pdf") if args.output else Path("report.pdf")
                 )
                 try:
-                    rendered_pdf = render_pdf_via_quarto(md_text, pdf_out_path)
+                    rendered_pdf = render_pdf_via_quarto(md_text, pdf_out_path, report_title=qmd_title)
                 except RuntimeError as exc:
                     print(f"quarto render failed, skipping PDF output: {exc}", file=sys.stderr)
                 else:

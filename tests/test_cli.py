@@ -161,7 +161,7 @@ def test_github_blob_base_non_github_remote_is_none(tmp_path):
 
 def test_open_flag_launches_browser_on_successful_render(tmp_path, monkeypatch):
     opened = []
-    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, out_path: out_path)
+    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, out_path, **_kw: out_path)
     monkeypatch.setattr(cli.webbrowser, "open", lambda uri: opened.append(uri))
     out = tmp_path / "report.html"
     out.write_text("<html></html>")
@@ -175,7 +175,7 @@ def test_open_flag_without_html_prints_notice(tmp_path, capsys):
 
 
 def test_open_flag_when_quarto_missing_prints_nothing_to_open(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, _out_path: None)
+    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, _out_path, **_kw: None)
     main([str(tmp_path), "--html", "--open", "--output", str(tmp_path / "report.md")])
     assert "no HTML file was rendered" in capsys.readouterr().err
 
@@ -184,25 +184,25 @@ def test_open_flag_when_quarto_missing_prints_nothing_to_open(tmp_path, monkeypa
 
 
 def test_pdf_flag_writes_rendered_pdf(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path: out_path)
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path, **_kw: out_path)
     main([str(tmp_path), "--pdf", "--output", str(tmp_path / "report.md")])
     assert f"wrote {tmp_path / 'report.pdf'}" in capsys.readouterr().err
 
 
 def test_pdf_flag_default_output_name_has_no_markdown_output(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path: out_path)
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path, **_kw: out_path)
     main([str(tmp_path), "--pdf"])
     assert "wrote report.pdf" in capsys.readouterr().err
 
 
 def test_pdf_flag_when_quarto_missing_prints_notice(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, _out_path: None)
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, _out_path, **_kw: None)
     main([str(tmp_path), "--pdf", "--output", str(tmp_path / "report.md")])
     assert "quarto not found on PATH -- skipping PDF render" in capsys.readouterr().err
 
 
 def test_pdf_flag_when_render_fails_prints_error(tmp_path, monkeypatch, capsys):
-    def _raise(_md_text, _out_path):
+    def _raise(_md_text, _out_path, **_kw):
         raise RuntimeError("no LaTeX installation found")
 
     monkeypatch.setattr(cli, "render_pdf_via_quarto", _raise)
@@ -213,9 +213,35 @@ def test_pdf_flag_when_render_fails_prints_error(tmp_path, monkeypatch, capsys):
 
 
 def test_html_and_pdf_flags_together_both_render(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, out_path: out_path)
-    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path: out_path)
+    monkeypatch.setattr(cli, "render_html_via_quarto", lambda _md_text, out_path, **_kw: out_path)
+    monkeypatch.setattr(cli, "render_pdf_via_quarto", lambda _md_text, out_path, **_kw: out_path)
     main([str(tmp_path), "--html", "--pdf", "--output", str(tmp_path / "report.md")])
     err = capsys.readouterr().err
     assert f"wrote {tmp_path / 'report.html'}" in err
     assert f"wrote {tmp_path / 'report.pdf'}" in err
+
+
+def test_html_render_receives_lesson_title_as_report_title(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text("title: 'Python Intro'\n")
+    captured = {}
+
+    def _capture(_md_text, out_path, **kw):
+        captured.update(kw)
+        return out_path
+
+    monkeypatch.setattr(cli, "render_html_via_quarto", _capture)
+    main([str(tmp_path), "--html", "--output", str(tmp_path / "report.md")])
+    assert captured["report_title"] == "Python Intro — Lesson Check Report"
+
+
+def test_html_render_falls_back_to_default_title_when_no_lesson_title(tmp_path, monkeypatch):
+    captured = {}
+
+    def _capture(_md_text, out_path, **kw):
+        captured.update(kw)
+        return out_path
+
+    monkeypatch.setattr(cli, "render_html_via_quarto", _capture)
+    main([str(tmp_path), "--html", "--output", str(tmp_path / "report.md")])
+    assert captured["report_title"].startswith("Lesson Check Report")
+    assert "Python Intro" not in captured["report_title"]

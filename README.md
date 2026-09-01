@@ -97,6 +97,10 @@ lesson title, carpentry, life cycle, license, source repo, authors, and
 contact -- so a report handed to someone else identifies itself and the
 lesson without extra context. Missing fields (no `CITATION.cff`, an empty
 `config.yaml`) just drop from the block rather than showing blank lines.
+The `--html`/`--pdf` document's own title (the browser tab, the PDF's
+cover/metadata title) is the lesson's title too, not a generic "Lesson
+Check Report" -- it falls back to that generic title only when
+`config.yaml` has none.
 
 The markdown report (and the HTML built from it) opens with a **Files**
 checklist: one checkbox per location, with an issue count, linking down into
