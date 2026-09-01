@@ -233,7 +233,7 @@ throughput long before you run out of RAM outright.
 | `objectives` | Weak/unmeasurable objective verbs (`know`, `understand`, `appreciate`, ...) vs. action verbs (`explain`, `choose`, `predict`, ...) | CLDT's SMART objectives guidance |
 | `style` | Heavy contraction use | Carpentries Lab reviewer checklist (accessibility, translation/ESL learners) |
 | `boilerplate` | Unedited `sandpaper::create_lesson()` scaffold left in place: an episode's title or body still the generated default, or a `questions`/`objectives`/`keypoints` block that exists but only holds placeholder bullets (`keypoint1`, `Put questions here`, ...); same idea applied to `learners/setup.md`, `learners/reference.md`, `instructors/instructor-notes.md`, `profiles/learner-profiles.md`, which the checks above never look at since they aren't episodes | CLDT, a structurally-complete episode (passes every check above) can still be entirely unwritten, this is the gap between "the required blocks exist" and "someone wrote the lesson" |
-| `config` | *(also)* missing lesson glossary (`reference.md`) | Carpentries Lab reviewer checklist |
+| `config` | *(also)* missing lesson glossary (`reference.md`); a file under `episodes/` that's unlisted in `episodes:` *and* has none of the three required blocks -- a strong signal it's misplaced reference content (e.g. a glossary or resources page) rather than an unwritten episode, regardless of what it's named | Carpentries Lab reviewer checklist |
 
 Div and heading checks skip content inside fenced code blocks (```` ``` ````/`~~~`) — a lesson that teaches Markdown, Workbench syntax, or shell `#` comments will contain literal `:::`/`#` text that isn't a real div or heading.
 

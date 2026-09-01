@@ -20,12 +20,16 @@ from checker.lesson_check import (
     _check_links,
     _check_objective_verbs,
     _check_placeholder_bullets,
+    _looks_misplaced,
+    _unlisted_episode_files,
     check_config,
     check_episode,
     check_support_files,
     read_lesson_metadata,
     resolve_glossary_path,
+    run_checks,
 )
+from checker.report import Finding
 
 VALID_EPISODE_BODY = """\
 :::::: questions
@@ -779,3 +783,92 @@ def test_read_lesson_metadata_malformed_yaml_is_empty_not_a_crash(tmp_path):
     metadata = read_lesson_metadata(tmp_path)
     assert metadata.title is None
     assert metadata.authors == []
+
+
+# -- misplaced-episode-file detection (unlisted + zero required divs) -------
+#
+# Real bug: a glossary/resources file dropped in episodes/ instead of
+# learners/reference.md, unlisted in config.yaml, structurally nothing like
+# an episode -- previously only produced 5 generic "episode is broken"
+# errors with no hint that the actual problem was "this file doesn't belong
+# here." Filename-agnostic on purpose: the signal is "unlisted + zero of
+# the three required blocks," not a hardcoded list of suspicious names.
+
+
+def test_unlisted_episode_files_returns_files_missing_from_explicit_list(tmp_path):
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n",
+        episodes={"01-intro.md": episode_text(), "glossary.md": "# Glossary\n\nSome terms.\n"},
+    )
+    assert _unlisted_episode_files(lesson_dir) == ["glossary.md"]
+
+
+def test_unlisted_episode_files_empty_when_episodes_field_blank(tmp_path):
+    # A blank `episodes:` is documented Workbench behavior: sandpaper
+    # includes everything automatically, so nothing counts as "unlisted".
+    lesson_dir = make_lesson(
+        tmp_path, config_extra="episodes:\n", episodes={"glossary.md": "# Glossary\n"}
+    )
+    assert _unlisted_episode_files(lesson_dir) == []
+
+
+def test_looks_misplaced_true_when_all_three_required_blocks_missing():
+    findings = [
+        Finding("error", "divs", "missing required `questions` block"),
+        Finding("error", "divs", "missing required `objectives` block"),
+        Finding("error", "divs", "missing required `keypoints` block"),
+    ]
+    assert _looks_misplaced(findings) is True
+
+
+def test_looks_misplaced_false_when_one_required_block_present():
+    findings = [
+        Finding("error", "divs", "missing required `questions` block"),
+        Finding("error", "divs", "missing required `objectives` block"),
+    ]
+    assert _looks_misplaced(findings) is False
+
+
+def test_run_checks_flags_unlisted_zero_structure_file_as_misplaced(tmp_path):
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n",
+        episodes={
+            "01-intro.md": episode_text(),
+            "glossary.md": "# Glossary\n\nAlgorithm\n: A sequence of steps.\n",
+        },
+    )
+    findings = run_checks(lesson_dir)
+    matches = [f for f in findings if "looks like reference content" in f.message]
+    assert len(matches) == 1
+    assert matches[0].location == "episodes/glossary.md"
+    assert matches[0].severity == "warning"
+
+
+def test_run_checks_does_not_flag_listed_zero_structure_file(tmp_path):
+    # If the author DID list it in config.yaml, that's a declared intent
+    # for it to be a real episode -- just very unwritten, not misplaced.
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n- draft.md\n",
+        episodes={"01-intro.md": episode_text(), "draft.md": "# Draft\n\nNothing yet.\n"},
+    )
+    findings = run_checks(lesson_dir)
+    assert not any("looks like reference content" in f.message for f in findings)
+
+
+def test_run_checks_does_not_flag_unlisted_file_with_partial_structure(tmp_path):
+    # Some required blocks present (even if incomplete) means this is a
+    # real, if broken, episode attempt -- not misplaced reference content.
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n",
+        episodes={
+            "01-intro.md": episode_text(),
+            "in-progress.md": "---\ntitle: 'WIP'\nteaching: 10\nexercises: 10\n---\n"
+            ":::: keypoints\n- something\n::::\n",
+        },
+    )
+    findings = run_checks(lesson_dir)
+    assert not any("looks like reference content" in f.message for f in findings)

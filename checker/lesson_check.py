@@ -244,6 +244,31 @@ def _code_fence_mask(body: str) -> list[bool]:
     return mask
 
 
+def _unlisted_episode_files(lesson_dir: Path) -> list[str]:
+    """Episode filenames on disk that aren't in config.yaml's `episodes:`
+    list. Empty when config.yaml is missing/unparseable, or when the
+    `episodes:` field itself is blank -- sandpaper then includes every file
+    automatically, so nothing counts as "unlisted" (see check_config()).
+    Shared by check_config() (the "not listed" warning) and run_checks()
+    (the "this doesn't look like an episode at all" check below, which
+    only fires for files that are both unlisted and structurally empty)."""
+    config_path = lesson_dir / "config.yaml"
+    if not config_path.exists():
+        return []
+    try:
+        config = yaml.safe_load(config_path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    episodes_field = config.get("episodes")
+    if not episodes_field:
+        return []
+    episodes_dir = lesson_dir / "episodes"
+    if not episodes_dir.exists():
+        return []
+    on_disk = sorted(p.name for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd"))
+    return [name for name in on_disk if name not in episodes_field]
+
+
 def check_config(lesson_dir: Path) -> list[Finding]:
     """Check config.yaml: placeholder values, episode list vs. files on disk,
     extension-less episode files, and glossary existence."""
@@ -355,8 +380,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
     # every file under episodes/ automatically, in alphabetical order. Only flag
     # "unlisted" files when the author is curating an explicit ordered list.
     if episodes_field:
-        unlisted = [e for e in on_disk if e not in listed_episodes]
-        for name in unlisted:
+        for name in _unlisted_episode_files(lesson_dir):
             findings.append(
                 Finding(
                     "warning",
@@ -1058,6 +1082,24 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     return findings
 
 
+def _looks_misplaced(episode_findings: list[Finding]) -> bool:
+    """True when an "episode" has none of the three required
+    questions/objectives/keypoints blocks at all. Even a totally blank,
+    just-created episode has empty versions of all three, since they're
+    baked into `sandpaper::create_lesson()`'s own scaffold -- so zero of
+    the three present is a much stronger "this was never meant to be an
+    episode" signal than "this episode is very unwritten." Checked against
+    the actual `divs`-category findings (each required block that's
+    missing produces its own Finding), not by re-parsing the body, so this
+    can't drift out of sync with what _check_divs() actually detected."""
+    missing_required = sum(
+        1
+        for f in episode_findings
+        if f.category == "divs" and f.message.startswith("missing required `")
+    )
+    return missing_required == len(REQUIRED_TOP_DIVS)
+
+
 def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Finding]:
     """Entry point: run config/support-file checks plus every episode check,
     optionally scoped to one episode via episode_filter."""
@@ -1084,7 +1126,26 @@ def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Find
             )
             return findings
 
+    unlisted = set(_unlisted_episode_files(lesson_dir))
     for path in episode_files:
-        findings.extend(check_episode(path, lesson_dir))
+        episode_findings = check_episode(path, lesson_dir)
+        if path.name in unlisted and _looks_misplaced(episode_findings):
+            findings.append(
+                Finding(
+                    "warning",
+                    "config",
+                    f"episodes/{path.name} has none of the required "
+                    "questions/objectives/keypoints blocks and isn't listed in "
+                    "config.yaml `episodes:` -- this looks like reference content, not "
+                    "an unwritten episode",
+                    location=str(path.relative_to(lesson_dir)),
+                    hint="If this is meant to be an episode, add the required blocks "
+                    "and list it in config.yaml. If it's reference content instead, "
+                    "move it: a glossary belongs in learners/reference.md; other "
+                    "support material belongs under learners/, instructors/, or "
+                    "profiles/, not episodes/.",
+                )
+            )
+        findings.extend(episode_findings)
 
     return findings
