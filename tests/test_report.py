@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import json
 
+import yaml
+
 from checker import __version__
-from checker.report import Finding, LessonMetadata, render_json, render_markdown, render_terminal
+from checker.report import (
+    _EXTENSION_SRC,
+    Finding,
+    LessonMetadata,
+    render_json,
+    render_markdown,
+    render_terminal,
+)
 
 
 def test_render_markdown_blame_annotates_heading():
@@ -216,3 +225,25 @@ def test_render_json_includes_generated_by_and_lesson():
 def test_render_json_no_metadata_lesson_is_none():
     payload = json.loads(render_json([], "Report"))
     assert payload["lesson"] is None
+
+
+# -- checker-report Quarto format extension -----------------------------------
+#
+# These don't invoke quarto itself (no automated test does, consistent with
+# the rest of this file -- see README's Testing section); they guard against
+# the extension directory being accidentally deleted, renamed, or shipping
+# invalid YAML, which _render_via_quarto would otherwise only surface as a
+# runtime failure the next time someone actually runs --html/--pdf.
+
+
+def test_extension_directory_exists():
+    assert _EXTENSION_SRC.is_dir()
+    assert (_EXTENSION_SRC / "_extension.yml").is_file()
+    assert (_EXTENSION_SRC / "checker-report.scss").is_file()
+
+
+def test_extension_yml_is_valid_and_declares_html_and_pdf_formats():
+    manifest = yaml.safe_load((_EXTENSION_SRC / "_extension.yml").read_text())
+    formats = manifest["contributes"]["formats"]
+    assert "html" in formats
+    assert "pdf" in formats

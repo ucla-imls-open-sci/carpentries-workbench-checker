@@ -294,18 +294,20 @@ def render_json(
     return json.dumps(payload, indent=2)
 
 
-# Pandoc format options per target, keyed the same as quarto's own `--to`.
-_QUARTO_FORMAT_OPTIONS: dict[str, dict] = {
-    "html": {"toc": True, "embed-resources": True},
-    "pdf": {"toc": True},
-}
+# The "checker-report" Quarto format extension (see _extensions/checker-report/
+# in the repo root -- checker/report.py's parent's parent) owns the report's
+# actual look (theme, PDF margins, toc). Quarto only discovers an
+# `_extensions/` directory that's a sibling of the .qmd being rendered, so
+# _render_via_quarto copies it into the temp render directory each time.
+_EXTENSION_NAME = "checker-report"
+_EXTENSION_SRC = Path(__file__).resolve().parent.parent / "_extensions" / _EXTENSION_NAME
 
 
 def _render_via_quarto(
     markdown_text: str, out_path: Path, to: str, report_title: str
 ) -> Path | None:
     """Shared by render_html_via_quarto/render_pdf_via_quarto: write the report
-    as a .qmd with the given pandoc `format:` block, render it to `to`
+    as a .qmd using the checker-report format extension, render it to `to`
     ("html"/"pdf"), and copy the result to out_path. Returns None if quarto
     isn't on PATH at all (caller should fall back to the plain markdown/
     terminal report, not fail). Raises RuntimeError if quarto is present but
@@ -313,6 +315,11 @@ def _render_via_quarto(
     so that doesn't get silently swallowed and mistaken for "quarto missing"."""
     if shutil.which("quarto") is None:
         return None
+    if not _EXTENSION_SRC.is_dir():
+        raise RuntimeError(
+            f"checker-report Quarto extension not found at {_EXTENSION_SRC} -- "
+            "this is a broken install, not a missing dependency"
+        )
 
     with tempfile.TemporaryDirectory() as tmp:
         # Resolve symlinks (macOS puts TemporaryDirectory() under /var, which
@@ -322,18 +329,20 @@ def _render_via_quarto(
         # "../../../../private/..." path that doesn't match the unresolved
         # cwd we gave it, failing with a permission error on /private.
         tmp_dir = Path(tmp).resolve()
+        shutil.copytree(_EXTENSION_SRC, tmp_dir / "_extensions" / _EXTENSION_NAME)
         qmd_path = tmp_dir / "report.qmd"
+        quarto_format = f"{_EXTENSION_NAME}-{to}"
         # yaml.safe_dump, not an f-string, because report_title is a lesson's
         # actual title -- arbitrary text that can contain colons, quotes, or
         # unicode that would otherwise break the YAML front matter.
         front_matter = yaml.safe_dump(
-            {"title": report_title, "format": {to: _QUARTO_FORMAT_OPTIONS[to]}},
+            {"title": report_title, "format": {quarto_format: "default"}},
             sort_keys=False,
             allow_unicode=True,
         )
         qmd_path.write_text(f"---\n{front_matter}---\n\n" + markdown_text)
         result = subprocess.run(
-            ["quarto", "render", str(qmd_path), "--to", to, "-o", out_path.name],
+            ["quarto", "render", str(qmd_path), "--to", quarto_format, "-o", out_path.name],
             cwd=tmp_dir,
             capture_output=True,
             text=True,

@@ -1,0 +1,32 @@
+/*-- scss:defaults --*/
+
+$body-line-height: 1.55;
+$font-family-monospace: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+$link-color: #1a5fb4;
+$headings-font-weight: 600;
+
+/*-- scss:rules --*/
+
+// Each `## location` heading starts a new file's findings -- a visible rule
+// gives the eye a break between files without needing a page break.
+h2 {
+  margin-top: 2.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #dee2e6;
+}
+
+h1 + p {
+  color: #6c757d;
+}
+
+// Task-list checkboxes (unchecked = actionable finding, plain bullet = info
+// note) render small and low-contrast by default -- make the distinction
+// readable at a glance.
+ul.task-list li input[type="checkbox"] {
+  transform: scale(1.15);
+  margin-right: 0.4rem;
+}
+
+code {
+  font-size: 0.9em;
+}

@@ -126,6 +126,24 @@ PDF (LaTeX's default font has no emoji glyphs, so they're silently dropped);
 severity is still legible from the checkbox/bullet plus the bold category
 name, but it's not as visually distinct as the terminal/HTML output.
 
+### The report's look: a Quarto format extension
+
+`--html`/`--pdf` render through a bundled Quarto custom format extension at
+[`_extensions/checker-report/`](_extensions/checker-report/) (`_extension.yml`
++ `checker-report.scss`), not inline options in `report.py`. `report.py`
+copies that directory next to the generated `.qmd` at render time -- Quarto
+only discovers `_extensions/` as a sibling of the file being rendered, so
+this happens automatically; nothing to install separately.
+
+The extension owns *how* every report looks (typography, link color, PDF
+margins/colorlinks, the rule under each `## file` heading); `report.py`
+still owns *what* it says. To change the report's appearance -- a different
+accent color, real Carpentries branding, a logo -- edit the extension, not
+`report.py`. `pixi run test` includes a couple of lightweight checks
+(`_extension.yml` exists and parses, declares both `html` and `pdf`) that
+don't need Quarto installed; they just guard against the extension
+directory silently going missing or invalid.
+
 ### Adding the AI narrative review
 
 Off by default (it costs time, and for `claude`/`codex` it costs API usage).
