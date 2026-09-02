@@ -20,11 +20,16 @@ from checker.lesson_check import (
     _check_links,
     _check_objective_verbs,
     _check_placeholder_bullets,
+    _looks_misplaced,
+    _unlisted_episode_files,
     check_config,
     check_episode,
     check_support_files,
+    read_lesson_metadata,
     resolve_glossary_path,
+    run_checks,
 )
+from checker.report import Finding
 
 VALID_EPISODE_BODY = """\
 :::::: questions
@@ -171,6 +176,15 @@ def test_divs_unclosed_is_error():
     assert any("never closed" in f.message for f in findings)
 
 
+def test_divs_unclosed_has_structured_line_number():
+    # The line field must be populated, not just embedded in the message --
+    # renderers need it as data to build clickable links.
+    body = ":::: challenge\nNo closing fence.\n"
+    findings = _check_divs(body, "ep.md")
+    matches = [f for f in findings if "never closed" in f.message]
+    assert matches and matches[0].line == 1
+
+
 def test_divs_extraneous_close_is_error():
     body = "Some text.\n:::\n"
     findings = _check_divs(body, "ep.md")
@@ -201,6 +215,12 @@ def test_headings_level_one_is_error():
     assert any(f.severity == "error" for f in findings)
 
 
+def test_headings_level_one_has_structured_line_number():
+    findings = _check_headings("# Top level\n\n## Ok\n", "ep.md")
+    matches = [f for f in findings if f.severity == "error"]
+    assert matches and matches[0].line == 1
+
+
 def test_headings_first_not_level_two_is_warning():
     findings = _check_headings("### Starts too deep\n", "ep.md")
     assert any("expected level 2" in f.message for f in findings)
@@ -229,6 +249,7 @@ def test_links_image_missing_alt_and_missing_file(tmp_path):
     messages = [f.message for f in findings]
     assert any("no alt text" in m for m in messages)
     assert any("missing file" in m for m in messages)
+    assert all(f.line == 1 for f in findings)
 
 
 def test_links_episode_relative_fig_image_resolves(tmp_path):
@@ -461,6 +482,7 @@ def test_placeholder_bullets_keypoint_variants_are_flagged():
     findings = _check_placeholder_bullets(body, "ep.md")
     assert len(findings) == 2
     assert all(f.severity == "error" for f in findings)
+    assert sorted(f.line for f in findings) == [2, 3]
 
 
 def test_placeholder_bullets_real_keypoint_is_silent():
@@ -691,3 +713,162 @@ def test_check_episode_reports_real_file_line_numbers_not_body_relative(tmp_path
     heading_findings = [f for f in findings if "Stray H1" in f.message]
     assert heading_findings, "expected a level-1 heading finding"
     assert f"line {real_line}" in heading_findings[0].message
+
+
+# -- read_lesson_metadata ---------------------------------------------------
+
+
+def test_read_lesson_metadata_full_config_and_citation(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        "title: 'Python Intro'\n"
+        "carpentry: 'lc'\n"
+        "life_cycle: 'beta'\n"
+        "license: 'CC-BY 4.0'\n"
+        "source: 'https://github.com/org/repo'\n"
+        "contact: 'team@example.org'\n"
+        "created: '2020-01-01'\n"
+    )
+    (tmp_path / "CITATION.cff").write_text(
+        "authors:\n"
+        "  - family-names: Hennesy\n"
+        "    given-names: Cody\n"
+        "  - family-names: Org\n"
+        "    given-names: An\n"
+    )
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title == "Python Intro"
+    assert metadata.carpentry == "Library Carpentry"
+    assert metadata.life_cycle == "beta"
+    assert metadata.license == "CC-BY 4.0"
+    assert metadata.source == "https://github.com/org/repo"
+    assert metadata.contact == "team@example.org"
+    assert metadata.created == "2020-01-01"
+    assert metadata.authors == ["Cody Hennesy", "An Org"]
+
+
+def test_read_lesson_metadata_no_config_or_citation_is_empty(tmp_path):
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title is None
+    assert metadata.authors == []
+    assert metadata.has_content() is False
+
+
+def test_read_lesson_metadata_missing_citation_leaves_authors_empty(tmp_path):
+    (tmp_path / "config.yaml").write_text("title: 'Some Lesson'\ncarpentry: 'dc'\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title == "Some Lesson"
+    assert metadata.carpentry == "Data Carpentry"
+    assert metadata.authors == []
+    assert metadata.has_content() is True
+
+
+def test_read_lesson_metadata_citation_entity_author_uses_name_field(tmp_path):
+    # CFF allows an "entity" author (an organization) via `name` instead of
+    # the usual given-names/family-names pair.
+    (tmp_path / "config.yaml").write_text("title: 'Some Lesson'\n")
+    (tmp_path / "CITATION.cff").write_text("authors:\n  - name: The Carpentries\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.authors == ["The Carpentries"]
+
+
+def test_read_lesson_metadata_unknown_carpentry_code_passes_through(tmp_path):
+    (tmp_path / "config.yaml").write_text("carpentry: 'xyz'\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.carpentry == "xyz"
+
+
+def test_read_lesson_metadata_malformed_yaml_is_empty_not_a_crash(tmp_path):
+    (tmp_path / "config.yaml").write_text("title: [unterminated\n")
+    (tmp_path / "CITATION.cff").write_text("authors: [unterminated\n")
+    metadata = read_lesson_metadata(tmp_path)
+    assert metadata.title is None
+    assert metadata.authors == []
+
+
+# -- misplaced-episode-file detection (unlisted + zero required divs) -------
+#
+# Real bug: a glossary/resources file dropped in episodes/ instead of
+# learners/reference.md, unlisted in config.yaml, structurally nothing like
+# an episode -- previously only produced 5 generic "episode is broken"
+# errors with no hint that the actual problem was "this file doesn't belong
+# here." Filename-agnostic on purpose: the signal is "unlisted + zero of
+# the three required blocks," not a hardcoded list of suspicious names.
+
+
+def test_unlisted_episode_files_returns_files_missing_from_explicit_list(tmp_path):
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n",
+        episodes={"01-intro.md": episode_text(), "glossary.md": "# Glossary\n\nSome terms.\n"},
+    )
+    assert _unlisted_episode_files(lesson_dir) == ["glossary.md"]
+
+
+def test_unlisted_episode_files_empty_when_episodes_field_blank(tmp_path):
+    # A blank `episodes:` is documented Workbench behavior: sandpaper
+    # includes everything automatically, so nothing counts as "unlisted".
+    lesson_dir = make_lesson(
+        tmp_path, config_extra="episodes:\n", episodes={"glossary.md": "# Glossary\n"}
+    )
+    assert _unlisted_episode_files(lesson_dir) == []
+
+
+def test_looks_misplaced_true_when_all_three_required_blocks_missing():
+    findings = [
+        Finding("error", "divs", "missing required `questions` block"),
+        Finding("error", "divs", "missing required `objectives` block"),
+        Finding("error", "divs", "missing required `keypoints` block"),
+    ]
+    assert _looks_misplaced(findings) is True
+
+
+def test_looks_misplaced_false_when_one_required_block_present():
+    findings = [
+        Finding("error", "divs", "missing required `questions` block"),
+        Finding("error", "divs", "missing required `objectives` block"),
+    ]
+    assert _looks_misplaced(findings) is False
+
+
+def test_run_checks_flags_unlisted_zero_structure_file_as_misplaced(tmp_path):
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n",
+        episodes={
+            "01-intro.md": episode_text(),
+            "glossary.md": "# Glossary\n\nAlgorithm\n: A sequence of steps.\n",
+        },
+    )
+    findings = run_checks(lesson_dir)
+    matches = [f for f in findings if "looks like reference content" in f.message]
+    assert len(matches) == 1
+    assert matches[0].location == "episodes/glossary.md"
+    assert matches[0].severity == "warning"
+
+
+def test_run_checks_does_not_flag_listed_zero_structure_file(tmp_path):
+    # If the author DID list it in config.yaml, that's a declared intent
+    # for it to be a real episode -- just very unwritten, not misplaced.
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n- draft.md\n",
+        episodes={"01-intro.md": episode_text(), "draft.md": "# Draft\n\nNothing yet.\n"},
+    )
+    findings = run_checks(lesson_dir)
+    assert not any("looks like reference content" in f.message for f in findings)
+
+
+def test_run_checks_does_not_flag_unlisted_file_with_partial_structure(tmp_path):
+    # Some required blocks present (even if incomplete) means this is a
+    # real, if broken, episode attempt -- not misplaced reference content.
+    lesson_dir = make_lesson(
+        tmp_path,
+        config_extra="episodes:\n- 01-intro.md\n",
+        episodes={
+            "01-intro.md": episode_text(),
+            "in-progress.md": "---\ntitle: 'WIP'\nteaching: 10\nexercises: 10\n---\n"
+            ":::: keypoints\n- something\n::::\n",
+        },
+    )
+    findings = run_checks(lesson_dir)
+    assert not any("looks like reference content" in f.message for f in findings)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from checker.report import Finding
+from checker.report import Finding, LessonMetadata
 
 REQUIRED_TOP_DIVS = ("questions", "objectives", "keypoints")
 
@@ -37,6 +37,15 @@ KNOWN_DIV_TYPES = {
     "hint",
     "tab",
     "group-tab",
+}
+
+# config.yaml's `carpentry:` code -> the full org name, for the report header.
+CARPENTRY_NAMES = {
+    "lc": "Library Carpentry",
+    "dc": "Data Carpentry",
+    "swc": "Software Carpentry",
+    "cp": "The Carpentries",
+    "incubator": "The Carpentries Incubator",
 }
 
 CONFIG_PLACEHOLDER_VALUES = {
@@ -235,6 +244,31 @@ def _code_fence_mask(body: str) -> list[bool]:
     return mask
 
 
+def _unlisted_episode_files(lesson_dir: Path) -> list[str]:
+    """Episode filenames on disk that aren't in config.yaml's `episodes:`
+    list. Empty when config.yaml is missing/unparseable, or when the
+    `episodes:` field itself is blank -- sandpaper then includes every file
+    automatically, so nothing counts as "unlisted" (see check_config()).
+    Shared by check_config() (the "not listed" warning) and run_checks()
+    (the "this doesn't look like an episode at all" check below, which
+    only fires for files that are both unlisted and structurally empty)."""
+    config_path = lesson_dir / "config.yaml"
+    if not config_path.exists():
+        return []
+    try:
+        config = yaml.safe_load(config_path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    episodes_field = config.get("episodes")
+    if not episodes_field:
+        return []
+    episodes_dir = lesson_dir / "episodes"
+    if not episodes_dir.exists():
+        return []
+    on_disk = sorted(p.name for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd"))
+    return [name for name in on_disk if name not in episodes_field]
+
+
 def check_config(lesson_dir: Path) -> list[Finding]:
     """Check config.yaml: placeholder values, episode list vs. files on disk,
     extension-less episode files, and glossary existence."""
@@ -346,8 +380,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
     # every file under episodes/ automatically, in alphabetical order. Only flag
     # "unlisted" files when the author is curating an explicit ordered list.
     if episodes_field:
-        unlisted = [e for e in on_disk if e not in listed_episodes]
-        for name in unlisted:
+        for name in _unlisted_episode_files(lesson_dir):
             findings.append(
                 Finding(
                     "warning",
@@ -371,6 +404,52 @@ def check_config(lesson_dir: Path) -> list[Finding]:
         )
 
     return findings
+
+
+def read_lesson_metadata(lesson_dir: Path) -> LessonMetadata:
+    """Lesson identity for the report header: title, carpentry, life cycle,
+    license, source repo, contact, and authors, from config.yaml and (if
+    present) CITATION.cff. Best-effort -- missing or unparseable files just
+    leave those fields empty; this is descriptive context for a report
+    header, not a check that should fail the run, so it deliberately doesn't
+    raise or return Findings the way check_config() does."""
+    metadata = LessonMetadata()
+
+    config_path = lesson_dir / "config.yaml"
+    if config_path.exists():
+        try:
+            config = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError:
+            config = {}
+        carpentry_code = config.get("carpentry") or None
+        metadata.title = config.get("title") or None
+        metadata.carpentry = (
+            CARPENTRY_NAMES.get(carpentry_code, carpentry_code) if carpentry_code else None
+        )
+        metadata.life_cycle = config.get("life_cycle") or None
+        metadata.license = config.get("license") or None
+        metadata.source = config.get("source") or None
+        metadata.contact = config.get("contact") or None
+        metadata.created = config.get("created") or None
+
+    citation_path = lesson_dir / "CITATION.cff"
+    if citation_path.exists():
+        try:
+            citation = yaml.safe_load(citation_path.read_text()) or {}
+        except yaml.YAMLError:
+            citation = {}
+        for entry in citation.get("authors") or []:
+            if not isinstance(entry, dict):
+                continue
+            # CFF allows an "entity" author (an organization) via `name`,
+            # instead of the usual given-names/family-names pair.
+            name = entry.get("name") or " ".join(
+                part for part in (entry.get("given-names"), entry.get("family-names")) if part
+            )
+            if name:
+                metadata.authors.append(name)
+
+    return metadata
 
 
 def check_support_files(lesson_dir: Path) -> list[Finding]:
@@ -594,6 +673,7 @@ def _check_boilerplate(
                     f'body still contains scaffold example text on line {lineno}: '
                     f'"{fingerprint}"',
                     location=location,
+                    line=lineno,
                     hint="[CLDT] This looks like unedited Carpentries Workbench scaffold "
                     "content, not real lesson material. Replace it, or delete the episode "
                     "if it isn't ready to write yet, an empty episode is more honest than "
@@ -603,7 +683,7 @@ def _check_boilerplate(
     return findings
 
 
-def _check_placeholder_bullets(body: str, location: str) -> list[Finding]:
+def _check_placeholder_bullets(body: str, location: str, line_offset: int = 0) -> list[Finding]:
     """Flag placeholder bullet text (`keypoint1`, `Put questions here`, ...)
     left inside `questions`/`objectives`/`keypoints` blocks. The block itself
     existing satisfies `_check_divs`'s required-block check, so this is the
@@ -641,12 +721,15 @@ def _check_placeholder_bullets(body: str, location: str) -> list[Finding]:
         bullet_raw = stripped[marker_match.end():].strip()
         normalized = _normalize_bullet_text(bullet_raw)
         if _is_placeholder_bullet(normalized.lower()):
+            reported_line = i + 1 + line_offset
             findings.append(
                 Finding(
                     "error",
                     "boilerplate",
-                    f'`{tracked_type}` still has placeholder bullet text: "{bullet_raw}"',
+                    f'`{tracked_type}` still has placeholder bullet text on line '
+                    f'{reported_line}: "{bullet_raw}"',
                     location=location,
+                    line=reported_line,
                     hint="[CLDT] Replace with real content, this is scaffold placeholder "
                     "text, not a written keypoint/objective/question.",
                 )
@@ -715,6 +798,7 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                         f"unrecognized div type `{div_type}` on line {lineno + line_offset}"
                         " -- verify against the Workbench style guide",
                         location=location,
+                        line=lineno + line_offset,
                         hint="See https://carpentries.github.io/sandpaper-docs/episodes.html "
                         "for the full list of recognized div types.",
                     )
@@ -728,6 +812,7 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                         f"extraneous closing `:::` on line {lineno + line_offset} with no "
                         "matching open div",
                         location=location,
+                        line=lineno + line_offset,
                         hint="Either this fence has no matching opening `::: type` above it, "
                         "or an earlier div's closing fence was deleted, causing this one to "
                         "close the wrong block. Check the div immediately above.",
@@ -743,6 +828,7 @@ def _check_divs(body: str, location: str, line_offset: int = 0) -> list[Finding]
                 "divs",
                 f"`{div_type}` div opened on line {lineno + line_offset} is never closed",
                 location=location,
+                line=lineno + line_offset,
                 hint="Add a closing `:::` fence (same or more colons than the opening "
                 "fence) before the next block starts. An unclosed div silently swallows "
                 "everything after it, including blocks that look fine on their own, "
@@ -792,6 +878,7 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"level-1 heading `# {text}` on line {reported_line}"
                     " -- episodes must not use H1, start at H2",
                     location=location,
+                    line=reported_line,
                 )
             )
         elif not first_heading_seen and level != 2:
@@ -802,6 +889,7 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"first heading `{'#' * level} {text}` on line {reported_line} is level "
                     f"{level}, expected level 2",
                     location=location,
+                    line=reported_line,
                 )
             )
 
@@ -816,6 +904,9 @@ def _check_headings(body: str, location: str, line_offset: int = 0) -> list[Find
                     f"heading `{text}` on line {reported_line} duplicates the one on line "
                     f"{seen[text]}",
                     location=location,
+                    hint="Give each challenge/solution/exercise a unique, descriptive heading "
+                    "instead of reusing a generic one.",
+                    line=reported_line,
                 )
             )
         else:
@@ -841,6 +932,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f"image on line {lineno} has no alt text: `{path}`",
                         location=location,
+                        line=lineno,
                         hint="Add descriptive alt text for accessibility.",
                     )
                 )
@@ -856,6 +948,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                             "links",
                             f"image on line {lineno} points to a missing file: `{path}`",
                             location=location,
+                            line=lineno,
                             hint="Check the path is relative to episodes/ (images "
                             "typically live in episodes/fig/), and that the file was "
                             "actually committed.",
@@ -870,6 +963,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f'generic link text "{text}" on line {lineno}',
                         location=location,
+                        line=lineno,
                         hint="[CLDT/Carpentries Lab] Screen readers and translation tools "
                         "lose context with generic link text like 'click here' -- "
                         "describe the destination.",
@@ -899,6 +993,7 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         "links",
                         f"internal link on line {lineno} may be broken: `{path}`",
                         location=location,
+                        line=lineno,
                         hint="Confirm the target exists relative to episodes/, the "
                         "lesson root, or learners/, instructors/, profiles/. A link to "
                         "another episode's rendered .html targets its .md source.",
@@ -941,7 +1036,7 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     findings.extend(_check_headings(body, location, line_offset))
     findings.extend(_check_links(body, lesson_dir, location, line_offset))
     findings.extend(_check_boilerplate(front_matter, body, location, line_offset))
-    findings.extend(_check_placeholder_bullets(body, location))
+    findings.extend(_check_placeholder_bullets(body, location, line_offset))
     objective_findings, objective_count = _check_objective_verbs(body, location)
     findings.extend(objective_findings)
     findings.extend(_check_contractions(body, location))
@@ -987,6 +1082,24 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     return findings
 
 
+def _looks_misplaced(episode_findings: list[Finding]) -> bool:
+    """True when an "episode" has none of the three required
+    questions/objectives/keypoints blocks at all. Even a totally blank,
+    just-created episode has empty versions of all three, since they're
+    baked into `sandpaper::create_lesson()`'s own scaffold -- so zero of
+    the three present is a much stronger "this was never meant to be an
+    episode" signal than "this episode is very unwritten." Checked against
+    the actual `divs`-category findings (each required block that's
+    missing produces its own Finding), not by re-parsing the body, so this
+    can't drift out of sync with what _check_divs() actually detected."""
+    missing_required = sum(
+        1
+        for f in episode_findings
+        if f.category == "divs" and f.message.startswith("missing required `")
+    )
+    return missing_required == len(REQUIRED_TOP_DIVS)
+
+
 def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Finding]:
     """Entry point: run config/support-file checks plus every episode check,
     optionally scoped to one episode via episode_filter."""
@@ -1013,7 +1126,26 @@ def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Find
             )
             return findings
 
+    unlisted = set(_unlisted_episode_files(lesson_dir))
     for path in episode_files:
-        findings.extend(check_episode(path, lesson_dir))
+        episode_findings = check_episode(path, lesson_dir)
+        if path.name in unlisted and _looks_misplaced(episode_findings):
+            findings.append(
+                Finding(
+                    "warning",
+                    "config",
+                    f"episodes/{path.name} has none of the required "
+                    "questions/objectives/keypoints blocks and isn't listed in "
+                    "config.yaml `episodes:` -- this looks like reference content, not "
+                    "an unwritten episode",
+                    location=str(path.relative_to(lesson_dir)),
+                    hint="If this is meant to be an episode, add the required blocks "
+                    "and list it in config.yaml. If it's reference content instead, "
+                    "move it: a glossary belongs in learners/reference.md; other "
+                    "support material belongs under learners/, instructors/, or "
+                    "profiles/, not episodes/.",
+                )
+            )
+        findings.extend(episode_findings)
 
     return findings

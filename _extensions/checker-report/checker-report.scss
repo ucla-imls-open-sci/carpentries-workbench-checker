@@ -1,0 +1,40 @@
+/*-- scss:defaults --*/
+
+// The Carpentries' two official brand hex values (wrench-mark red, wordmark
+// navy) -- see https://docs.carpentries.org/topic_folders/communications/resources/logos.html.
+// Colors only, not the logo mark itself: the logo repo (github.com/carpentries/logo)
+// ships no LICENSE and Carpentries' own docs require prior approval for any
+// derived/modified use of the mark, so nothing from that repo is vendored here.
+$carpentries-red: #ff4955;
+$carpentries-navy: #071159;
+
+$body-line-height: 1.55;
+$font-family-monospace: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+$link-color: $carpentries-navy;
+$headings-font-weight: 600;
+
+/*-- scss:rules --*/
+
+// Each `## location` heading starts a new file's findings -- a visible rule
+// gives the eye a break between files without needing a page break.
+h2 {
+  margin-top: 2.5rem;
+  padding-top: 0.75rem;
+  border-top: 3px solid $carpentries-red;
+}
+
+h1 + p {
+  color: #6c757d;
+}
+
+// Task-list checkboxes (unchecked = actionable finding, plain bullet = info
+// note) render small and low-contrast by default -- make the distinction
+// readable at a glance.
+ul.task-list li input[type="checkbox"] {
+  transform: scale(1.15);
+  margin-right: 0.4rem;
+}
+
+code {
+  font-size: 0.9em;
+}

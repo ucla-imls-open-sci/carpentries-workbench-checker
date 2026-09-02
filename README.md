@@ -63,6 +63,15 @@ pixi run check ./my-lesson --format markdown --output report.md
 # a warning + the markdown file if you don't)
 pixi run check ./my-lesson --format markdown --output report.md --html
 
+# --open launches the rendered HTML in your default browser once it's built
+# (requires --html; a no-op warning otherwise)
+pixi run check ./my-lesson --format markdown --output report.md --html --open
+
+# PDF, for sharing with someone who doesn't want a repo checkout or a browser
+# tab -- also via Quarto, additionally needs a LaTeX distribution
+# (`quarto install tinytex`, or an existing MacTeX/TeX Live on PATH)
+pixi run check ./my-lesson --format markdown --output report.md --pdf
+
 # One episode only
 pixi run check ./my-lesson --episode 03-sharing.md
 
@@ -78,6 +87,83 @@ pixi run check ./my-lesson --format markdown --blame --output report.md
 
 Exit code is `1` if any error-level finding was reported, `0` otherwise —
 safe to use in a pre-commit hook or your own CI step.
+
+### Reading the markdown/HTML report
+
+Every report format (terminal, markdown, JSON) opens with which tool
+generated it (`carpentries-workbench-checker vX.Y.Z`) and, when
+`config.yaml` and `CITATION.cff` are present, who and what it's about:
+lesson title, carpentry, life cycle, license, source repo, authors, and
+contact -- so a report handed to someone else identifies itself and the
+lesson without extra context. Missing fields (no `CITATION.cff`, an empty
+`config.yaml`) just drop from the block rather than showing blank lines.
+The `--html`/`--pdf` document's own title (the browser tab, the PDF's
+cover/metadata title) is the lesson's title too, not a generic "Lesson
+Check Report" -- it falls back to that generic title only when
+`config.yaml` has none.
+
+The markdown report (and the HTML/PDF built from it) has three parts:
+
+1. **Files** -- one checkbox per location with an issue count, linking down
+   into that file's own section, for file-level triage before reading detail.
+2. **Action summary** -- a table, one row per *shared fix* across the whole
+   lesson (same category, same exact hint text), not one row per finding.
+   A problem repeated many times (the same duplicate-heading warning in 16
+   places) shows up as one row with `Occurrences: 16`, not 16 near-identical
+   lines -- this is what actually answers "what's off, what needs to
+   change" at a glance, which per-finding detail can't.
+3. **Per-file detail**, one `## location` section per file (matching the
+   order you'd actually fix things in an editor). Within a file, findings
+   that share an exact `hint` still collapse into one `**Change:**` +
+   occurrence checklist instead of N separate cards, closed with a single
+   `**Guide:**` link -- so a file with 8 findings that are really "one
+   repeated problem + two one-offs" reads as 3 blocks, not 8 lines.
+
+Every finding whose category has a canonical Workbench/Carpentries doc
+(`config`, `front-matter`, `divs`, `headings`, `links`, `objectives`,
+`style`) links to it via that `**Guide:**` line. `boilerplate` findings
+don't get one, since it's a check this tool invented rather than something
+sandpaper/pegboard document, so their instance-specific hints carry the
+explanation instead. Each occurrence line links back to its source: a real
+GitHub blob URL anchored to the line (`#L42`) when the lesson directory is
+a GitHub repo, plain `` `path:line` `` text otherwise. Terminal output gets
+the same line references as plain `path:line` tokens, which VS Code's
+integrated terminal (and several others) auto-links to jump straight to
+that line.
+
+This structure (file-level triage, then a cross-file pattern summary, then
+file-first detail with same-fix collapsing) came out of a `/validate-external`
+round on the original per-finding-per-line design -- see
+[`design/validation-prompt-report-scannability-2026-08-31.md`](design/validation-prompt-report-scannability-2026-08-31.md).
+
+`--pdf` renders the same markdown through Quarto with a `pdf` target instead
+of `html` -- same checklist, same clickable links (as real hyperlinks, not
+just blue text). One difference: the ❌/⚠️/ℹ️ severity icons don't render in
+PDF (LaTeX's default font has no emoji glyphs, so they're silently dropped);
+severity is still legible from the checkbox/bullet plus the bold category
+name, but it's not as visually distinct as the terminal/HTML output.
+
+### The report's look: a Quarto format extension
+
+`--html`/`--pdf` render through a bundled Quarto custom format extension at
+[`_extensions/checker-report/`](_extensions/checker-report/) (`_extension.yml`
++ `checker-report.scss`), not inline options in `report.py`. `report.py`
+copies that directory next to the generated `.qmd` at render time -- Quarto
+only discovers `_extensions/` as a sibling of the file being rendered, so
+this happens automatically; nothing to install separately.
+
+The extension owns *how* every report looks (typography, link color, PDF
+margins/colorlinks, the rule under each `## file` heading); `report.py`
+still owns *what* it says. Colors are The Carpentries' own official values
+(navy `#071159` for links, red `#FF4955` for the file-heading rule -- see
+the extension's own README for sourcing); the logo mark itself isn't
+embedded since the logo repo ships with no license and Carpentries'
+own docs require prior approval to use a derived/modified copy of it.
+To change the report's appearance further, edit the extension, not
+`report.py`. `pixi run test` includes a couple of lightweight checks
+(`_extension.yml` exists and parses, declares both `html` and `pdf`) that
+don't need Quarto installed; they just guard against the extension
+directory silently going missing or invalid.
 
 ### Adding the AI narrative review
 
@@ -147,7 +233,7 @@ throughput long before you run out of RAM outright.
 | `objectives` | Weak/unmeasurable objective verbs (`know`, `understand`, `appreciate`, ...) vs. action verbs (`explain`, `choose`, `predict`, ...) | CLDT's SMART objectives guidance |
 | `style` | Heavy contraction use | Carpentries Lab reviewer checklist (accessibility, translation/ESL learners) |
 | `boilerplate` | Unedited `sandpaper::create_lesson()` scaffold left in place: an episode's title or body still the generated default, or a `questions`/`objectives`/`keypoints` block that exists but only holds placeholder bullets (`keypoint1`, `Put questions here`, ...); same idea applied to `learners/setup.md`, `learners/reference.md`, `instructors/instructor-notes.md`, `profiles/learner-profiles.md`, which the checks above never look at since they aren't episodes | CLDT, a structurally-complete episode (passes every check above) can still be entirely unwritten, this is the gap between "the required blocks exist" and "someone wrote the lesson" |
-| `config` | *(also)* missing lesson glossary (`reference.md`) | Carpentries Lab reviewer checklist |
+| `config` | *(also)* missing lesson glossary (`reference.md`); a file under `episodes/` that's unlisted in `episodes:` *and* has none of the three required blocks -- a strong signal it's misplaced reference content (e.g. a glossary or resources page) rather than an unwritten episode, regardless of what it's named | Carpentries Lab reviewer checklist |
 
 Div and heading checks skip content inside fenced code blocks (```` ``` ````/`~~~`) — a lesson that teaches Markdown, Workbench syntax, or shell `#` comments will contain literal `:::`/`#` text that isn't a real div or heading.
 
