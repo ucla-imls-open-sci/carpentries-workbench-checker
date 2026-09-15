@@ -15,7 +15,7 @@ import tempfile
 import webbrowser
 from pathlib import Path
 
-from checker.ai_review import BACKENDS, review_episode
+from checker.ai_review import BACKENDS
 from checker.lesson_check import (
     GLOSSARY_PLACEHOLDER_FINGERPRINT,
     read_lesson_metadata,
@@ -29,6 +29,9 @@ from checker.report import (
     render_pdf_via_quarto,
     render_terminal,
 )
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _resolve_target(target: str) -> tuple[Path, tempfile.TemporaryDirectory | None]:
@@ -164,6 +167,29 @@ def _github_blob_base(lesson_dir: Path) -> str | None:
     return f"https://github.com/{match['org']}/{match['repo']}/blob/{sha.stdout.strip()}"
 
 
+def _dirty_files(lesson_dir: Path) -> set[str]:
+    """Paths (relative to `lesson_dir`) with uncommitted changes -- staged,
+    unstaged, or untracked. Checks run against the working tree, but
+    `_github_blob_base` links point at HEAD, so a finding on one of these
+    paths would send the reader to a version of the file that doesn't
+    contain what was actually checked. Empty set (not an error) if
+    lesson_dir isn't a git repo or the call fails/times out."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--no-renames"],
+            cwd=lesson_dir,
+            capture_output=True,
+            text=True,
+            timeout=_BLAME_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return set()
+    if result.returncode != 0:
+        return set()
+    # Porcelain format: 2 status chars, a space, then the path.
+    return {line[3:] for line in result.stdout.splitlines() if len(line) > 3}
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: parse args, run checks, render/write the report,
     optionally run the AI review. Returns 1 if any error-level finding was
@@ -172,7 +198,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("target", help="local lesson directory, or a git URL to clone and check")
     parser.add_argument("--episode", help="only check this one episode file (by filename)")
     parser.add_argument(
-        "--format", choices=("terminal", "markdown", "json"), default="terminal"
+        "--format",
+        choices=("terminal", "markdown", "json"),
+        default=None,
+        help="default: terminal when writing to stdout, inferred from --output's "
+        "extension (.json -> json, .md/.markdown -> markdown, anything else -> "
+        "markdown) when --output is given",
     )
     parser.add_argument("--output", help="write the report here instead of stdout")
     parser.add_argument(
@@ -215,6 +246,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Infer the format from --output's extension when --format wasn't given
+    # explicitly, so `--output report.md` doesn't silently save the
+    # terminal renderer's raw ANSI escape codes -- an explicit --format
+    # always wins over this inference.
+    if args.format:
+        resolved_format = args.format
+    elif args.output:
+        suffix = Path(args.output).suffix.lower().lstrip(".")
+        resolved_format = {"json": "json", "md": "markdown", "markdown": "markdown"}.get(
+            suffix, "markdown"
+        )
+    else:
+        resolved_format = "terminal"
+
     lesson_dir, tmp = _resolve_target(args.target)
     try:
         findings = run_checks(lesson_dir, episode_filter=args.episode)
@@ -231,22 +276,81 @@ def main(argv: list[str] | None = None) -> int:
         # report is for, and (for markdown/html) how to link back to source.
         metadata = read_lesson_metadata(lesson_dir)
         github_base = _github_blob_base(lesson_dir)
+        dirty_files = frozenset(_dirty_files(lesson_dir)) if github_base else frozenset()
 
-        if args.format == "terminal":
-            report_text = render_terminal(findings, title, blame=blame, metadata=metadata)
-        elif args.format == "markdown":
+        # Run AI review before rendering, not after, so its output can be
+        # folded into whichever report format(s) get written below instead
+        # of only ever landing on stdout. A per-episode failure (backend
+        # down, API error, ...) is recorded as that episode's review text
+        # rather than raised, so one bad episode doesn't cost the mechanical
+        # results that were already computed.
+        ai_reviews: dict[str, str] = {}
+        if args.ai:
+            from checker.ai_review import review_episode
+
+            episodes_dir = lesson_dir / "episodes"
+            episode_files = sorted(
+                p for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd")
+            )
+            if args.episode:
+                episode_files = [p for p in episode_files if p.name == args.episode]
+            glossary_text = _read_glossary(lesson_dir)
+            for path in episode_files:
+                relative_location = str(path.relative_to(lesson_dir))
+                episode_findings = [f for f in findings if f.location == relative_location]
+                label = f"{path.name} ({args.backend})"
+                print(f"running AI review: {label}...", file=sys.stderr)
+                try:
+                    ai_reviews[label] = review_episode(
+                        path.read_text(),
+                        episode_findings,
+                        args.backend,
+                        args.model,
+                        args.embed_model,
+                        glossary_text,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- backend errors are unpredictable
+                    print(f"AI review failed for {path.name}: {exc}", file=sys.stderr)
+                    ai_reviews[label] = f"(AI review failed: {exc})"
+
+        if resolved_format == "terminal":
+            report_text = render_terminal(
+                findings, title, blame=blame, metadata=metadata, ai_reviews=ai_reviews or None
+            )
+        elif resolved_format == "markdown":
             report_text = render_markdown(
-                findings, title, blame=blame, github_base=github_base, metadata=metadata
+                findings,
+                title,
+                blame=blame,
+                github_base=github_base,
+                metadata=metadata,
+                ai_reviews=ai_reviews or None,
+                dirty_files=dirty_files,
             )
         else:
-            report_text = render_json(findings, title, metadata=metadata)
+            report_text = render_json(
+                findings, title, metadata=metadata, ai_reviews=ai_reviews or None
+            )
+
+        # Terminal-format ANSI escapes are only useful on a live terminal --
+        # strip them when writing to a file or when stdout itself has been
+        # redirected/piped, regardless of format (a no-op for markdown/json,
+        # which never contain them).
+        if args.output or not sys.stdout.isatty():
+            report_text = _ANSI_RE.sub("", report_text)
 
         _write_or_print(report_text, args.output)
 
         rendered_html = None
         if args.html or args.pdf:
             md_text = render_markdown(
-                findings, title, blame=blame, github_base=github_base, metadata=metadata
+                findings,
+                title,
+                blame=blame,
+                github_base=github_base,
+                metadata=metadata,
+                ai_reviews=ai_reviews or None,
+                dirty_files=dirty_files,
             )
             # The document title Quarto puts in the browser tab / PDF cover --
             # distinct from `title` above, which is the in-body H1 and already
@@ -297,28 +401,6 @@ def main(argv: list[str] | None = None) -> int:
                 print("--open: no HTML file was rendered, nothing to open", file=sys.stderr)
             else:
                 print("--open has no effect without --html", file=sys.stderr)
-
-        if args.ai:
-            episodes_dir = lesson_dir / "episodes"
-            episode_files = sorted(
-                p for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd")
-            )
-            if args.episode:
-                episode_files = [p for p in episode_files if p.name == args.episode]
-            glossary_text = _read_glossary(lesson_dir)
-            for path in episode_files:
-                relative_location = str(path.relative_to(lesson_dir))
-                episode_findings = [f for f in findings if f.location == relative_location]
-                print(f"\n--- AI review: {path.name} ({args.backend}) ---")
-                review = review_episode(
-                    path.read_text(),
-                    episode_findings,
-                    args.backend,
-                    args.model,
-                    args.embed_model,
-                    glossary_text,
-                )
-                print(review)
 
         error_count = sum(1 for f in findings if f.severity == "error")
         return 1 if error_count else 0

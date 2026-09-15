@@ -123,15 +123,26 @@ def _terminal_location_prefix(location: str, line: int | None) -> str:
     return f"{location}:{line} " if line is not None else ""
 
 
-def _markdown_location_link(location: str, line: int | None, github_base: str | None) -> str:
+def _markdown_location_link(
+    location: str,
+    line: int | None,
+    github_base: str | None,
+    dirty_files: frozenset[str] = frozenset(),
+) -> str:
     """A clickable `path:line` reference for the markdown report. Prefers a
     real GitHub blob URL anchored to the line (works when pasted into a PR,
     an issue, or opened in a browser); falls back to plain `path:line` text
-    when the lesson isn't a GitHub repo or has no clean remote."""
+    when the lesson isn't a GitHub repo, has no clean remote, or -- since
+    `github_base` is pinned to HEAD while checks read the working tree --
+    `location` has uncommitted changes, where a HEAD link could easily point
+    at a version of the file that doesn't contain what was actually
+    flagged."""
     label = f"{location}:{line}" if line is not None else location
-    if github_base:
+    if github_base and location not in dirty_files:
         anchor = f"#L{line}" if line is not None else ""
         return f"[{label}]({github_base}/{location}{anchor})"
+    if location in dirty_files:
+        return f"`{label}` (uncommitted, not yet on GitHub)"
     return f"`{label}`"
 
 
@@ -171,8 +182,14 @@ def render_terminal(
     title: str,
     blame: dict[str, str] | None = None,
     metadata: LessonMetadata | None = None,
+    ai_reviews: dict[str, str] | None = None,
 ) -> str:
-    """Colored, grouped-by-location report for a terminal."""
+    """Colored, grouped-by-location report for a terminal.
+
+    `ai_reviews` (label -> review text or recorded failure), when given, is
+    appended as its own section so `--ai` output lands in the same report
+    as the mechanical findings instead of being printed separately after.
+    """
     lines = [f"\033[1m{title}\033[0m"]
     lines.extend(_lesson_metadata_lines(metadata, bold_open="\033[1m", bold_close="\033[0m"))
     if metadata is not None and metadata.has_content():
@@ -184,22 +201,28 @@ def render_terminal(
     )
     if not findings:
         lines.append("\033[32m✅ No issues found\033[0m")
-        return "\n".join(lines)
+    else:
+        by_location: dict[str, list[Finding]] = {}
+        for f in sorted(findings, key=Finding.sort_key):
+            by_location.setdefault(f.location or "general", []).append(f)
 
-    by_location: dict[str, list[Finding]] = {}
-    for f in sorted(findings, key=Finding.sort_key):
-        by_location.setdefault(f.location or "general", []).append(f)
+        for location, items in by_location.items():
+            lines.append(f"\n\033[1m{location}\033[0m{_blame_suffix(location, blame)}")
+            for f in items:
+                icon = SEVERITY_ICON.get(f.severity, "")
+                prefix = _terminal_location_prefix(location, f.line)
+                lines.append(f"  {icon} {prefix}[{f.category}] {f.message}")
+                if f.hint:
+                    lines.append(f"     → {f.hint}{_guide_suffix(f.category)}")
+                elif f.category in CATEGORY_GUIDE_LINKS:
+                    lines.append(f"     →{_guide_suffix(f.category)}")
 
-    for location, items in by_location.items():
-        lines.append(f"\n\033[1m{location}\033[0m{_blame_suffix(location, blame)}")
-        for f in items:
-            icon = SEVERITY_ICON.get(f.severity, "")
-            prefix = _terminal_location_prefix(location, f.line)
-            lines.append(f"  {icon} {prefix}[{f.category}] {f.message}")
-            if f.hint:
-                lines.append(f"     → {f.hint}{_guide_suffix(f.category)}")
-            elif f.category in CATEGORY_GUIDE_LINKS:
-                lines.append(f"     →{_guide_suffix(f.category)}")
+    if ai_reviews:
+        lines.append(f"\n\033[1mAI review\033[0m")
+        for label, text in ai_reviews.items():
+            lines.append(f"\n\033[1m{label}\033[0m")
+            lines.append(text)
+
     return "\n".join(lines)
 
 
@@ -265,7 +288,11 @@ def _grouped_sections(
 
 
 def _render_file_finding_group(
-    hint: str | None, items: list[Finding], github_base: str | None, guide_link: str
+    hint: str | None,
+    items: list[Finding],
+    github_base: str | None,
+    guide_link: str,
+    dirty_files: frozenset[str] = frozenset(),
 ) -> list[str]:
     """One blockquote within a file's section: a shared fix (if `hint` is
     set) leading a checklist of every line in *this file* it applies to, or
@@ -277,7 +304,7 @@ def _render_file_finding_group(
     for f in items:
         icon = SEVERITY_ICON_PLAIN.get(f.severity, "")
         prefix = "- [ ]" if f.severity in ("error", "warning") else "-"
-        where = _markdown_location_link(f.location or "General", f.line, github_base)
+        where = _markdown_location_link(f.location or "General", f.line, github_base, dirty_files)
         lines.append(f"> {prefix} {icon} {where} — {f.message}")
     if guide_link:
         lines.append(">")
@@ -291,6 +318,8 @@ def render_markdown(
     blame: dict[str, str] | None = None,
     github_base: str | None = None,
     metadata: LessonMetadata | None = None,
+    ai_reviews: dict[str, str] | None = None,
+    dirty_files: frozenset[str] = frozenset(),
 ) -> str:
     """PR/issue-ready report: a file-level checklist for triage, an Action
     Summary of every shared fix pattern across the whole lesson (so a
@@ -302,9 +331,17 @@ def render_markdown(
 
     `github_base` (e.g. `https://github.com/org/repo/blob/<sha>`), when
     given, turns every location:line reference into a real clickable GitHub
-    link instead of plain text -- see `cli._github_blob_base`. `metadata`
-    (see `LessonMetadata`), when given, adds a lesson-identity block (title,
-    carpentry, authors, ...) below the report title.
+    link instead of plain text -- see `cli._github_blob_base`. Checks read
+    the working tree, but this link is pinned to a single commit, so
+    `dirty_files` (paths with uncommitted changes, relative to the lesson
+    root -- see `cli._dirty_files`) tells the renderer which locations to
+    leave as plain text instead of a link that may not show what was
+    actually flagged. `metadata` (see `LessonMetadata`), when given, adds a
+    lesson-identity block (title, carpentry, authors, ...) below the report
+    title. `ai_reviews` (label -> review text or recorded failure), when
+    given, is appended as its own section, so `--ai --output report.md`
+    actually saves that output instead of only printing it to stdout after
+    this report is written.
     """
     counts = summarize(findings)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -321,60 +358,89 @@ def render_markdown(
         f"Generated {generated} by carpentries-workbench-checker v{__version__} · "
         f"{counts['error']} error(s), {counts['warning']} warning(s), {counts['info']} note(s)"
     )
+    if github_base:
+        sha = github_base.rsplit("/", 1)[-1]
+        lines.append(
+            f"GitHub links point at commit `{sha[:12]}`. Files with uncommitted "
+            "changes at generation time are shown as plain text instead, since "
+            "that commit may not contain what was actually checked."
+        )
     lines.append("")
     if not findings:
         lines.append("All checks passed. Nothing to address before opening a PR.")
-        return "\n".join(lines) + "\n"
-
-    by_location: dict[str, list[Finding]] = {}
-    for f in sorted(findings, key=Finding.sort_key):
-        by_location.setdefault(f.location or "General", []).append(f)
-
-    # File-level overview: which files need attention, linking down to that
-    # file's own detail section (file-first grouping below means a file
-    # again corresponds to exactly one section, same as pre-restructure).
-    lines.append("## Files")
-    lines.append("")
-    for location, items in by_location.items():
-        actionable = sum(1 for f in items if f.severity in ("error", "warning"))
-        box = "- [ ]" if actionable else "-"
-        count_label = f"{actionable} issue(s)" if actionable else f"{len(items)} note(s) only"
-        lines.append(f"{box} [{location}](#{_anchor(location)}) — {count_label}")
-    lines.append("")
-
-    # Action summary: every shared-fix pattern across the whole lesson, so a
-    # problem repeated in many files (e.g. 16 duplicate-heading warnings) is
-    # visible as one row here even though the detail section below is
-    # file-first and will show it once per file. No deep links -- a
-    # cross-file pattern has no single section it "belongs" to.
-    lines.append("## Action summary")
-    lines.append("")
-    lines.append("| Priority | What to change | Occurrences | Files |")
-    lines.append("|---|---|---:|---:|")
-    for severity, _category, hint, items in _grouped_sections(findings):
-        icon = SEVERITY_ICON_PLAIN.get(severity, "")
-        what = hint or items[0].message
-        n_files = len({f.location for f in items if f.location})
-        lines.append(f"| {icon} {severity.capitalize()} | {what} | {len(items)} | {n_files} |")
-    lines.append("")
-
-    # Detail section: file-first, matching the order someone actually fixes
-    # things in an editor. Within a file, same-fix findings still collapse
-    # into one change/checklist instead of N separate cards.
-    for location, items in by_location.items():
-        lines.append(f"## {location}{_blame_suffix(location, blame)}")
         lines.append("")
-        for _category, hint, group_items in _group_by_category_and_hint(items):
-            guide_link = _guide_link_markdown(group_items[0].category)
-            lines.extend(_render_file_finding_group(hint, group_items, github_base, guide_link))
+    else:
+        by_location: dict[str, list[Finding]] = {}
+        for f in sorted(findings, key=Finding.sort_key):
+            by_location.setdefault(f.location or "General", []).append(f)
+
+        # File-level overview: which files need attention, linking down to
+        # that file's own detail section (file-first grouping below means a
+        # file again corresponds to exactly one section, same as
+        # pre-restructure).
+        lines.append("## Files")
+        lines.append("")
+        for location, items in by_location.items():
+            actionable = sum(1 for f in items if f.severity in ("error", "warning"))
+            box = "- [ ]" if actionable else "-"
+            count_label = f"{actionable} issue(s)" if actionable else f"{len(items)} note(s) only"
+            lines.append(f"{box} [{location}](#{_anchor(location)}) — {count_label}")
+        lines.append("")
+
+        # Action summary: every shared-fix pattern across the whole lesson,
+        # so a problem repeated in many files (e.g. 16 duplicate-heading
+        # warnings) is visible as one row here even though the detail
+        # section below is file-first and will show it once per file. No
+        # deep links -- a cross-file pattern has no single section it
+        # "belongs" to.
+        lines.append("## Action summary")
+        lines.append("")
+        lines.append("| Priority | What to change | Occurrences | Files |")
+        lines.append("|---|---|---:|---:|")
+        for severity, _category, hint, items in _grouped_sections(findings):
+            icon = SEVERITY_ICON_PLAIN.get(severity, "")
+            what = hint or items[0].message
+            n_files = len({f.location for f in items if f.location})
+            lines.append(f"| {icon} {severity.capitalize()} | {what} | {len(items)} | {n_files} |")
+        lines.append("")
+
+        # Detail section: file-first, matching the order someone actually
+        # fixes things in an editor. Within a file, same-fix findings still
+        # collapse into one change/checklist instead of N separate cards.
+        for location, items in by_location.items():
+            lines.append(f"## {location}{_blame_suffix(location, blame)}")
             lines.append("")
-    return "\n".join(lines)
+            for _category, hint, group_items in _group_by_category_and_hint(items):
+                guide_link = _guide_link_markdown(group_items[0].category)
+                lines.extend(
+                    _render_file_finding_group(
+                        hint, group_items, github_base, guide_link, dirty_files
+                    )
+                )
+                lines.append("")
+
+    if ai_reviews:
+        lines.append("## AI review")
+        lines.append("")
+        for label, text in ai_reviews.items():
+            lines.append(f"### {label}")
+            lines.append("")
+            lines.append(text)
+            lines.append("")
+
+    return "\n".join(lines) + ("\n" if not findings and not ai_reviews else "")
 
 
 def render_json(
-    findings: list[Finding], title: str, metadata: LessonMetadata | None = None
+    findings: list[Finding],
+    title: str,
+    metadata: LessonMetadata | None = None,
+    ai_reviews: dict[str, str] | None = None,
 ) -> str:
-    """Machine-readable report, e.g. for a caller's own CI step."""
+    """Machine-readable report, e.g. for a caller's own CI step. `ai_reviews`
+    (label -> review text or recorded failure), when given, is included in
+    this same JSON payload rather than printed separately afterward, so a
+    caller piping stdout doesn't get a JSON document followed by prose."""
     payload = {
         "title": title,
         "generated": datetime.now(timezone.utc).isoformat(),
@@ -382,6 +448,7 @@ def render_json(
         "lesson": asdict(metadata) if metadata is not None else None,
         "summary": summarize(findings),
         "findings": [asdict(f) for f in findings],
+        "ai_reviews": ai_reviews or None,
     }
     return json.dumps(payload, indent=2)
 

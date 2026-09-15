@@ -27,11 +27,6 @@ import subprocess
 
 os.environ.setdefault("USER_AGENT", "carpentries-workbench-checker/0.2")
 
-from langchain_chroma import Chroma
-from langchain_community.document_loaders import WebBaseLoader
-from langchain_ollama import OllamaEmbeddings
-from langchain_text_splitters import CharacterTextSplitter
-
 from checker.report import Finding
 
 REFERENCE_URLS = [
@@ -94,6 +89,15 @@ _RETRIEVER_CACHE: dict[str, object] = {}
 
 
 def _get_retriever(embed_model: str):
+    # Imported here, not at module load: these are the only consumers of the
+    # heavy LangChain/Chroma stack in this module, so a caller that never
+    # actually runs an AI review (the default, mechanical-only path) never
+    # needs these installed.
+    from langchain_chroma import Chroma
+    from langchain_community.document_loaders import WebBaseLoader
+    from langchain_ollama import OllamaEmbeddings
+    from langchain_text_splitters import CharacterTextSplitter
+
     if embed_model not in _RETRIEVER_CACHE:
         docs = [WebBaseLoader(url).load() for url in REFERENCE_URLS]
         docs_list = [doc for sub in docs for doc in sub]

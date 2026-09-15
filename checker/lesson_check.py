@@ -217,6 +217,16 @@ DIV_FENCE_RE = re.compile(r"^(:{3,})\s*\{?\.?([a-zA-Z-]*)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)")
+# A Markdown link/image destination can carry an optional title after the
+# URL, separated by whitespace and quoted: `(fig/plot.png "A plot")`. Without
+# stripping it, the checker treats the quoted title as part of the file path
+# and reports the image/link as missing even when it exists.
+_LINK_TITLE_RE = re.compile(r'''^(\S+)(?:\s+["'(].*["')])?$''')
+
+
+def _strip_link_title(destination: str) -> str:
+    match = _LINK_TITLE_RE.match(destination.strip())
+    return match.group(1) if match else destination.strip()
 CODE_FENCE_RE = re.compile(r"^(```+|~~~+)")
 
 
@@ -291,6 +301,18 @@ def check_config(lesson_dir: Path) -> list[Finding]:
         return [
             Finding(
                 "error", "config", f"config.yaml is not valid YAML: {exc}", location="config.yaml"
+            )
+        ]
+
+    if not isinstance(config, dict):
+        return [
+            Finding(
+                "error",
+                "config",
+                f"config.yaml must be a mapping of key: value pairs, found a "
+                f"top-level {type(config).__name__} instead",
+                location="config.yaml",
+                hint="Example:\n  title: My Lesson\n  episodes:\n    - introduction.md",
             )
         ]
 
@@ -924,7 +946,8 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
         if in_code[i]:
             continue
         lineno = i + 1 + line_offset
-        for alt, path in IMAGE_RE.findall(line):
+        for alt, raw_path in IMAGE_RE.findall(line):
+            path = _strip_link_title(raw_path)
             if not alt.strip():
                 findings.append(
                     Finding(
@@ -955,7 +978,8 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                         )
                     )
 
-        for text, path in LINK_RE.findall(line):
+        for text, raw_path in LINK_RE.findall(line):
+            path = _strip_link_title(raw_path)
             if text.strip().lower() in GENERIC_LINK_TEXT:
                 findings.append(
                     Finding(
@@ -971,12 +995,15 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                 )
             if path.startswith(("http://", "https://", "#", "mailto:", "{{")):
                 continue
-            # Sandpaper renders every .md source to a same-named .html page, so a
-            # link to e.g. reference.html or ../learners/setup.html has no literal
-            # file on disk -- check for the .md source instead.
+            # Sandpaper renders every .md/.Rmd source to a same-named .html page,
+            # so a link to e.g. reference.html or ../learners/setup.html has no
+            # literal file on disk -- check for the source instead, either
+            # extension, an episode can be written in either.
             check_path = path.split("#", 1)[0]
+            candidates = [check_path]
             if check_path.endswith(".html"):
-                check_path = check_path[: -len(".html")] + ".md"
+                stem = check_path[: -len(".html")]
+                candidates = [stem + ".md", stem + ".Rmd"]
             if not check_path:
                 continue
             search_dirs = (
@@ -986,7 +1013,11 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
                 lesson_dir / "instructors",
                 lesson_dir / "profiles",
             )
-            if not any((d / check_path.lstrip("/")).resolve().exists() for d in search_dirs):
+            if not any(
+                (d / candidate.lstrip("/")).resolve().exists()
+                for d in search_dirs
+                for candidate in candidates
+            ):
                 findings.append(
                     Finding(
                         "warning",
@@ -1023,6 +1054,20 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
         body = text
         front_matter = {}
         line_offset = 0
+    elif not isinstance(parsed[0], dict):
+        findings.append(
+            Finding(
+                "error",
+                "front-matter",
+                f"front matter must be a mapping of key: value pairs, found a "
+                f"top-level {type(parsed[0]).__name__} instead",
+                location=location,
+                hint="Example:\n  title: My Episode\n  teaching: 10\n  exercises: 5",
+            )
+        )
+        body = parsed[1]
+        front_matter = {}
+        line_offset = text[: len(text) - len(body)].count("\n")
     else:
         front_matter, body = parsed
         findings.extend(_check_front_matter(front_matter, location))
