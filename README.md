@@ -503,6 +503,10 @@ Eric Huang. They designed the checker and wrote down what it should check. In
 2026 Tim Dennis filled in the implementation with AI assistance. See
 [CITATION.cff](CITATION.cff) for how to cite it.
 
+wbcheck grew out of the UCLA-IMLS Lessons for Librarians in Open Science
+program. Zhiyuan Yao coordinated the program. Loretta Hu, Hyerin Lee, Emily
+Gong, and Madeline Kim contributed to its website, documentation, and lessons.
+
 ## License
 
 [BSD 3-Clause](LICENSE)
