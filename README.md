@@ -496,6 +496,18 @@ reference.
 See [CONTRIBUTING.md](CONTRIBUTING.md). Everyone participating is expected to
 follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## Credits
+
+wbcheck began in 2023 as a project of UCLA DataSquad students Lawrence Lee and
+Eric Huang, and it evolved over time as the UCLA-IMLS Lessons for Librarians in
+Open Science program learned what collaborative lesson development involves.
+In 2026 Tim Dennis filled in the implementation with AI assistance. See
+[CITATION.cff](CITATION.cff) for how to cite it.
+
+Zhiyuan Yao coordinated the program. Loretta Hu, Hyerin Lee, Emily Gong, and
+Madeline Kim contributed to its website, documentation, and lessons. All are
+authors in CITATION.cff. Roles follow the CRediT taxonomy in [CREDITS.md](CREDITS.md).
+
 ## License
 
 [BSD 3-Clause](LICENSE)

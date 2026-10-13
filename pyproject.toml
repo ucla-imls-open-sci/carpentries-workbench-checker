@@ -4,7 +4,11 @@ description = "Fast local checks for Carpentries Workbench lessons, with an opti
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.11"
-authors = [{ name = "Tim Dennis", email = "tdennis@library.ucla.edu" }]
+authors = [
+    { name = "Lawrence Lee" },
+    { name = "Eric Huang" },
+    { name = "Tim Dennis", email = "tdennis@library.ucla.edu" },
+]
 dynamic = ["version"]
 dependencies = [
     "pyyaml>=6",
