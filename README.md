@@ -496,6 +496,13 @@ reference.
 See [CONTRIBUTING.md](CONTRIBUTING.md). Everyone participating is expected to
 follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## Credits
+
+wbcheck began in 2023 as a project of UCLA DataSquad students Lawrence Lee and
+Eric Huang. They designed the checker and wrote down what it should check. In
+2026 Tim Dennis filled in the implementation with AI assistance. See
+[CITATION.cff](CITATION.cff) for how to cite it.
+
 ## License
 
 [BSD 3-Clause](LICENSE)
