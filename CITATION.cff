@@ -21,6 +21,21 @@ authors:
     family-names: Dennis
     affiliation: UCLA Library Data Science Center
     orcid: 'https://orcid.org/0000-0001-6632-3812'
+  - given-names: Zhiyuan
+    family-names: Yao
+    affiliation: UCLA Library
+  - given-names: Loretta
+    family-names: Hu
+    affiliation: UCLA Library
+  - given-names: Hyerin
+    family-names: Lee
+    affiliation: UCLA Library
+  - given-names: Emily
+    family-names: Gong
+    affiliation: UCLA Library
+  - given-names: Madeline
+    family-names: Kim
+    affiliation: UCLA Library
 repository-code: 'https://github.com/ucla-imls-open-sci/carpentries-workbench-checker'
 abstract: |2
     A pixi-managed lesson checker for Carpentries Workbench lessons: deterministic

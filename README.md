@@ -505,8 +505,8 @@ In 2026 Tim Dennis filled in the implementation with AI assistance. See
 [CITATION.cff](CITATION.cff) for how to cite it.
 
 Zhiyuan Yao coordinated the program. Loretta Hu, Hyerin Lee, Emily Gong, and
-Madeline Kim contributed to its website, documentation, and lessons.
-Roles follow the CRediT taxonomy in [CREDITS.md](CREDITS.md).
+Madeline Kim contributed to its website, documentation, and lessons. All are
+authors in CITATION.cff. Roles follow the CRediT taxonomy in [CREDITS.md](CREDITS.md).
 
 ## License
 
