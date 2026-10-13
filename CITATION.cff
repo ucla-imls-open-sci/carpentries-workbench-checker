@@ -3,8 +3,8 @@
 
 cff-version: 1.2.0
 title: Carpentries Workbench Checker
-version: 0.3.0
-date-released: 2026-09-30
+version: 0.3.1
+date-released: 2026-10-12
 message: >-
   If you use this software, please cite it using the
   metadata from this file.
