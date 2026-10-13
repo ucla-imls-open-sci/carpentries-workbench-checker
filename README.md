@@ -499,13 +499,13 @@ follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Credits
 
 wbcheck began in 2023 as a project of UCLA DataSquad students Lawrence Lee and
-Eric Huang. They designed the checker and wrote down what it should check. In
-2026 Tim Dennis filled in the implementation with AI assistance. See
+Eric Huang, and it evolved over time as the UCLA-IMLS Lessons for Librarians in
+Open Science program learned what collaborative lesson development involves.
+In 2026 Tim Dennis filled in the implementation with AI assistance. See
 [CITATION.cff](CITATION.cff) for how to cite it.
 
-wbcheck grew out of the UCLA-IMLS Lessons for Librarians in Open Science
-program. Zhiyuan Yao coordinated the program. Loretta Hu, Hyerin Lee, Emily
-Gong, and Madeline Kim contributed to its website, documentation, and lessons.
+Zhiyuan Yao coordinated the program. Loretta Hu, Hyerin Lee, Emily Gong, and
+Madeline Kim contributed to its website, documentation, and lessons.
 
 ## License
 
