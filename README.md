@@ -2,6 +2,7 @@ Carpentries Workbench Checker (`wbcheck`)
 ==========================================
 
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/686178408.svg)](https://doi.org/10.5281/zenodo.23329531)
 
 Fast local checks for [Carpentries Workbench](https://carpentries.github.io/workbench/)
 lessons. In under a second, `wbcheck` finds broken front matter, missing
