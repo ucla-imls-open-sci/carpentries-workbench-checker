@@ -506,6 +506,7 @@ In 2026 Tim Dennis filled in the implementation with AI assistance. See
 
 Zhiyuan Yao coordinated the program. Loretta Hu, Hyerin Lee, Emily Gong, and
 Madeline Kim contributed to its website, documentation, and lessons.
+Roles follow the CRediT taxonomy in [CREDITS.md](CREDITS.md).
 
 ## License
 
