@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1 (2026-10-12)
+
+Credits and citation only. No behavior changes.
+
+### Changed
+- `CITATION.cff` lists all eight program contributors as authors, with version and release date, so Zenodo records carry them.
+- New `CREDITS.md` records contributor roles with the CRediT taxonomy.
+- README Credits section describes how wbcheck began with UCLA DataSquad students in 2023 and evolved with the UCLA-IMLS program.
+- `pyproject.toml` authors now include Lawrence Lee and Eric Huang.
+- `pixi.lock` refreshed.
+
 ## 0.3.0 (2026-09-30)
 
 From the 2026-09-30 standards review (`design/2026-09-30-standards-audit.md`,
