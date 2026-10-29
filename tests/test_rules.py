@@ -20,8 +20,9 @@ from checker.rules import RULES
 LESSON_CHECK_SRC = Path(__file__).resolve().parent.parent / "checker" / "lesson_check.py"
 
 # Rules with no external guide on purpose: WB012 is a CLI usage error
-# (--episode named a missing file), not a lesson-quality rule.
-RULES_WITHOUT_GUIDES = {"WB012"}
+# (--episode named a missing file), not a lesson-quality rule. WB115 is about
+# wbcheck's own notes, which no outside guide covers.
+RULES_WITHOUT_GUIDES = {"WB012", "WB115"}
 
 
 def _finding_codes_in_source() -> list[str | None]:

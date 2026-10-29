@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from checker.annotate import blank_notes, find_notes
 from checker.report import Finding, LessonMetadata, _normalize_for_id, assign_occurrences, legacy_anchor
 
 REQUIRED_TOP_DIVS = ("questions", "objectives", "keypoints")
@@ -332,8 +333,9 @@ def _explicit_alt(attributes: str | None) -> str | None:
 CODE_FENCE_RE = re.compile(r"^(```+|~~~+)")
 
 
-def _code_fence_mask(body: str) -> list[bool]:
-    """One bool per line: True if that line falls inside a fenced code block.
+def _code_fence_starts(lines: list[str]) -> list[int | None]:
+    """For each line, the 0-based index of the opening fence of the fenced
+    code block it falls in (the fence lines themselves included), else None.
 
     A lesson teaching Markdown, Workbench syntax, or shell `#` comments will
     contain literal `:::` or `#` text inside ```/~~~ blocks -- those aren't
@@ -342,17 +344,19 @@ def _code_fence_mask(body: str) -> list[bool]:
     as the opener, with nothing after it, so a ```` block can contain ```
     lines, and a ~~~ line doesn't close a ``` block.
     """
-    mask = []
+    starts: list[int | None] = []
     opener: str | None = None  # the opening fence run, e.g. "````"
-    for line in body.splitlines():
+    opened_at = 0
+    for i, line in enumerate(lines):
         stripped = line.strip()
         fence = CODE_FENCE_RE.match(stripped)
         if opener is None:
-            mask.append(bool(fence))
+            starts.append(i if fence else None)
             if fence:
                 opener = fence.group(1)
+                opened_at = i
         else:
-            mask.append(True)
+            starts.append(opened_at)
             if (
                 fence
                 and fence.group(1)[0] == opener[0]
@@ -360,7 +364,13 @@ def _code_fence_mask(body: str) -> list[bool]:
                 and stripped == fence.group(1)
             ):
                 opener = None
-    return mask
+    return starts
+
+
+def _code_fence_mask(body: str) -> list[bool]:
+    """One bool per line: True if that line falls inside a fenced code block
+    (see _code_fence_starts for the fence rules)."""
+    return [start is not None for start in _code_fence_starts(body.splitlines())]
 
 
 def load_yaml_mapping(path: Path) -> dict | None:
@@ -1390,7 +1400,9 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     boilerplate, placeholder bullets, objective verbs, contractions) on one
     episode file."""
     location = str(path.relative_to(lesson_dir)) if path.is_relative_to(lesson_dir) else path.name
-    text = path.read_text(errors="replace")
+    # wbcheck's own notes (`fix --annotate`) are blanked, not removed, so
+    # they can't trigger other checks and every line number stays true.
+    text = blank_notes(path.read_text(errors="replace"))
     findings: list[Finding] = []
 
     parsed = _split_front_matter(text)
@@ -1495,6 +1507,24 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     return findings
 
 
+def check_leftover_notes(lesson_dir: Path) -> list[Finding]:
+    """WB115: one finding per `wbcheck fix --annotate` note still in the
+    lesson. CI can block a publish on these with `--fail-on annotations`."""
+    return [
+        Finding(
+            "warning",
+            "annotations",
+            f"wbcheck note left in the file ({note.code}: {note.text})",
+            location=note.location,
+            line=note.line,
+            hint="Remove it with `wbcheck fix --clean-annotations`, or delete the line.",
+            code="WB115",
+            identity_anchor=f"{note.code}: {note.text}",
+        )
+        for note in find_notes(lesson_dir)
+    ]
+
+
 def _looks_misplaced(episode_findings: list[Finding]) -> bool:
     """True when an "episode" has none of the three required
     questions/objectives/keypoints blocks at all. Even a totally blank,
@@ -1559,4 +1589,5 @@ def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Find
             )
         findings.extend(episode_findings)
 
+    findings.extend(check_leftover_notes(lesson_dir))
     return assign_occurrences(findings)

@@ -9,7 +9,8 @@ explain themselves.
 
 Numbering (see issue #23):
   WB0xx  config.yaml, episode list, lesson-level files
-  WB1xx  episode front matter, scaffold/placeholder content, support files
+  WB1xx  episode front matter, scaffold/placeholder content, support files,
+         leftover wbcheck notes
   WB2xx  fenced divs and headings
   WB3xx  links and images
   WB4xx  objectives and style
@@ -438,6 +439,18 @@ _RULES: tuple[Rule, ...] = (
          limitations=("Says nothing about how well any glossary covers the lesson's terms.",),
          related=("WB010", "AI206")),
     # -- WB2xx: fenced divs and headings ------------------------------------
+    Rule("WB115", "annotation-left-behind", "wbcheck note left in a lesson file", "operations",
+         "checker-policy", "deterministic", "warning",
+         "A note is harmless to the build, but it shouldn't be published; `--fail-on annotations` makes it "
+         "block a push or publish.", _EP + ("support-page",),
+         checks="A line that is a wbcheck note (`<!-- wbcheck CODE: ... -->`, or `# wbcheck CODE: ...` in front "
+         "matter) outside fenced code, written by `wbcheck fix --annotate`.",
+         why="The note is scratch work for the author. Left in, it ships in the lesson's source and confuses "
+         "the next editor.",
+         response="Run `wbcheck fix --clean-annotations`, which removes only the lines wbcheck wrote.",
+         references=(),
+         exceptions=("A lesson that documents wbcheck notes inside a code block isn't flagged.",),
+         limitations=("Matches the note format exactly; a note someone edited by hand may not match.",)),
     Rule("WB201", "div-unknown-type", "unrecognized div type", "structure", "checker-policy", "heuristic",
          "info", "Often a typo, but custom classes are legitimate.", _EP,
          checks="A div's first class isn't one of the Workbench components wbcheck knows.",
