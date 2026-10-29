@@ -26,6 +26,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.text import Text
 
 from checker import __version__
+from checker.annotate import strip_notes
 from checker.cli import _read_glossary, _resolve_target
 from checker.console import render_ai_reviews, render_findings, render_results
 from checker.ignore import IgnoreRules, load_ignore
@@ -74,13 +75,16 @@ def _load_ignore_or_exit(lesson_dir: Path) -> IgnoreRules:
         raise typer.Exit(2) from exc
 
 
-FAIL_ON = ("error", "warning", "info", "never")
+FAIL_ON = ("error", "warning", "info", "annotations", "never")
 
 
 def _fails(results: Results, fail_on: str) -> bool:
-    """Whether any finding is at least as severe as `fail_on`."""
+    """Whether any finding is at least as severe as `fail_on`. "annotations"
+    means errors, plus any leftover `fix --annotate` note (WB115)."""
     if fail_on == "never":
         return False
+    if fail_on == "annotations":
+        return any(f.severity == "error" or f.code == "WB115" for f in results.findings)
     threshold = SEVERITY_ORDER[fail_on]
     return any(SEVERITY_ORDER.get(f.severity, 9) <= threshold for f in results.findings)
 
@@ -131,7 +135,8 @@ def check(
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Save results without printing the report.")] = False,
     fail_on: Annotated[
         str,
-        typer.Option(help="Exit 1 if any finding is at least this severe: error, warning, info, or never."),
+        typer.Option(help="Exit 1 if any finding is at least this severe: error, warning, info, or never. "
+                     "`annotations` fails on errors and on leftover `fix --annotate` notes (WB115)."),
     ] = "error",
     changed: Annotated[
         bool, typer.Option("--changed", help="Only show findings in files with uncommitted changes.")
@@ -257,7 +262,7 @@ def review(
                 mechanical = [f for f in results.findings if f.location == location and f.source != "ai"]
                 try:
                     result = review_episode(
-                        p.read_text(errors="replace"),
+                        strip_notes(p.read_text(errors="replace")),
                         location,
                         mechanical,
                         backend,
@@ -315,6 +320,15 @@ def _quarto_render(kind: str, render, md_text: str, out: Path, title: str) -> Pa
     return rendered
 
 
+def _write_or_print(path: Path, text: str) -> None:
+    """Write `text` to `path`, or to stdout when `path` is `-`."""
+    if str(path) == "-":
+        sys.stdout.write(text)
+        return
+    path.write_text(text)
+    err.print(f"[dim]wrote {path}[/]")
+
+
 @app.command()
 def report(
     lesson: Annotated[Path, typer.Argument(help="Lesson directory whose saved results to render.")] = Path("."),
@@ -325,6 +339,15 @@ def report(
     html: Annotated[Path | None, typer.Option("--html", help="Render an HTML report here (needs Quarto).")] = None,
     pdf: Annotated[Path | None, typer.Option("--pdf", help="Render a PDF report here (needs Quarto + LaTeX).")] = None,
     json_out: Annotated[Path | None, typer.Option("--json", help="Copy the results JSON here.")] = None,
+    sarif: Annotated[
+        Path | None,
+        typer.Option("--sarif", help="Write SARIF 2.1.0 here (for the VS Code/Positron SARIF Viewer). `-` is stdout."),
+    ] = None,
+    lines_out: Annotated[
+        Path | None,
+        typer.Option("--lines", help="Write `file:line:col: severity CODE message` lines here (for editor problem "
+                     "matchers). `-` is stdout."),
+    ] = None,
     open_html: Annotated[bool, typer.Option("--open", help="Open the HTML report in a browser.")] = False,
     show_source: Annotated[bool, typer.Option("--source", help="Show the source line under each finding.")] = False,
 ) -> None:
@@ -339,10 +362,23 @@ def report(
         err.print(f"[red]{exc}[/]")
         raise typer.Exit(2) from exc
 
-    wrote_file = any(x is not None for x in (md, html, pdf, json_out))
+    if sarif is not None:
+        from checker.editors import sarif_text
+
+        _write_or_print(sarif, sarif_text(results))
+    if lines_out is not None:
+        from checker.editors import editor_lines
+
+        lesson_dir = Path(results.lesson_dir) if results.lesson_dir else None
+        _write_or_print(lines_out, "".join(f"{x}\n" for x in editor_lines(results.findings, lesson_dir)))
+
+    wrote_file = any(x is not None for x in (md, html, pdf, json_out, sarif, lines_out))
     if not wrote_file:
         render_results(Console(), results, show_source=show_source)
         return
+
+    if not any(x is not None for x in (md, html, pdf, json_out)):
+        return  # only --sarif / --lines were asked for
 
     md_text = render_markdown(
         results.findings,
@@ -552,6 +588,14 @@ def fix(
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="With --apply, apply the safe fixes without asking (never suggestions).")
     ] = False,
+    annotate: Annotated[
+        bool,
+        typer.Option("--annotate", help="Write each finding into the lesson file as a comment above the flagged "
+                     "line (edits files; undo with --clean-annotations)."),
+    ] = False,
+    clean_annotations: Annotated[
+        bool, typer.Option("--clean-annotations", help="Remove the notes `--annotate` wrote, and only those.")
+    ] = False,
 ) -> None:
     """Work through findings in your editor, or apply the safe automatic fixes.
 
@@ -565,6 +609,11 @@ def fix(
     levels (WB213). --suggest offers editorial ones, each confirmed on its own
     even with --yes: the objective rewrite (WB401) and adding an unlisted
     episode to config.yaml (WB009), which may be a draft left out on purpose.
+
+    --annotate writes the findings into the files as comments
+    (`<!-- wbcheck CODE: message -->`), for editors with no problems panel.
+    Running it twice adds nothing. --clean-annotations removes them. Until
+    you do, `wbcheck check` warns about each one (WB115).
     """
     import fnmatch
     import os
@@ -575,10 +624,25 @@ def fix(
     if min_severity not in ("error", "warning", "info") or source not in ("all", "mechanical", "ai"):
         err.print("[red]--min-severity must be error/warning/info and --source all/mechanical/ai[/]")
         raise typer.Exit(2)
+    if sum([annotate, clean_annotations, apply or suggest, print_only]) > 1:
+        err.print("[red]Use only one of --annotate, --clean-annotations, --apply, --suggest, --print[/]")
+        raise typer.Exit(2)
     lesson_dir = lesson.expanduser().resolve()
     if not (lesson_dir / "episodes").is_dir():
         err.print(f"[red]{lesson_dir} doesn't look like a lesson[/] (no episodes/)")
         raise typer.Exit(2)
+
+    if clean_annotations:
+        from checker.annotate import clean_annotations as remove_notes
+
+        removed, changed_paths = remove_notes(lesson_dir)
+        if removed:
+            err.print(f"[green]Removed {removed} wbcheck note(s)[/] from {len(changed_paths)} file(s):")
+            for rel in changed_paths:
+                err.print(f"  {lesson_dir / rel}")
+        else:
+            err.print("No wbcheck notes found.")
+        return
 
     results, _, _, path = _refresh(str(lesson_dir), None, False, None)
 
@@ -606,6 +670,20 @@ def fix(
     if print_only:
         for line in quickfix_lines(todo, lesson_dir):
             print(line)
+        return
+    if annotate:
+        from checker.annotate import annotate as write_notes
+
+        outcome = write_notes(todo, lesson_dir)
+        err.print(f"[green]Added {outcome.added} note(s)[/] to {len(outcome.files)} file(s); "
+                  f"{outcome.present} already noted.")
+        for rel in outcome.files:
+            err.print(f"  {lesson_dir / rel}")
+        for reason in outcome.skipped:
+            err.print(f"[yellow]skipped:[/] {reason}")
+        if outcome.added:
+            err.print("Remove them with [bold]wbcheck fix --clean-annotations[/]; "
+                      "[bold]wbcheck check[/] warns (WB115) while any remain.")
         return
     if not todo:
         err.print("[green]Nothing to fix[/] with these filters.")

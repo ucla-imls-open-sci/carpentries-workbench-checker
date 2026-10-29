@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Editor integration (design/2026-10-29-editor-integration-prompt.md). No change to existing commands unless you pass a new flag.
+
+### Added
+- **`wbcheck report --sarif FILE`** writes SARIF 2.1.0 (rules, levels, finding IDs as fingerprints) for the VS Code and Positron SARIF Viewer. **`--lines FILE`** writes `file:line:col: severity CODE message` for editor problem matchers. `-` means stdout for both.
+- **`editors/wbcheck-markers.R`** loads saved results into RStudio's Markers pane with `rstudioapi::sourceMarkers()`. **`editors/README.md`** documents RStudio, a `tasks.json` problem matcher for Positron and VS Code, and SARIF.
+- **`wbcheck fix --annotate`** writes `<!-- wbcheck CODE: message -->` above the flagged block (a YAML comment in front matter). It is idempotent, stays out of code fences, hoists above a list or a div title so rendering doesn't change, and skips a front-matter note that would change the parsed YAML. **`--clean-annotations`** removes only those notes and restores the file byte for byte.
+- **WB115**: a leftover wbcheck note is a warning in `wbcheck check`. **`--fail-on annotations`** exits 1 on errors and leftover notes.
+
+### Changed
+- Checks and the AI review now ignore wbcheck notes, so a note never creates a finding or reaches a model.
+- Internal: `_code_fence_mask` is built on a new `_code_fence_starts`; its output is unchanged.
+
 ## 0.3.1 (2026-10-12)
 
 Credits and citation only. No behavior changes.

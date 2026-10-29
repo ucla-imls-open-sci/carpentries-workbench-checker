@@ -15,6 +15,7 @@ import tempfile
 import webbrowser
 from pathlib import Path
 
+from checker.annotate import strip_notes
 from checker.lesson_check import (
     GLOSSARY_PLACEHOLDER_FINGERPRINT,
     read_lesson_metadata,
@@ -295,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"running AI review: {label}...", file=sys.stderr)
                 try:
                     result = review_episode(
-                        path.read_text(errors="replace"),
+                        strip_notes(path.read_text(errors="replace")),
                         relative_location,
                         episode_findings,
                         args.backend,

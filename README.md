@@ -90,6 +90,7 @@ wbcheck check LESSON --episode 03-sharing.md   # one episode
 wbcheck check LESSON --source                  # show the offending line under each finding
 wbcheck check LESSON --blame                   # record who last changed each file with findings
 wbcheck check LESSON --fail-on warning         # exit 1 on warnings too (also: info, never)
+wbcheck check LESSON --fail-on annotations     # exit 1 on errors and leftover `fix --annotate` notes
 wbcheck check LESSON --quiet                   # save results without printing
 wbcheck check LESSON --changed --since main    # only files changed since main or uncommitted
 ```
@@ -149,6 +150,28 @@ With any other editor (or with `--step` in vim), it goes one finding at a
 time. It shows the code, message, quote, and fix, then `enter` opens the file
 at the line, `s` skips, and `q` stops. After each edit it re-checks and says
 ✔ fixed or ✗ still reported.
+
+### RStudio, Positron and VS Code
+
+Findings can show in the editor's own panel without touching any lesson file.
+Full setup is in [`editors/README.md`](editors/README.md).
+
+- **RStudio**: `source("editors/wbcheck-markers.R"); wbcheck_markers()` loads
+  the saved results into the Markers pane through `rstudioapi::sourceMarkers()`.
+- **Positron and VS Code**: a task with a problem matcher reads
+  `wbcheck report . --lines -` (`file:line:col: severity CODE message`) into
+  the Problems panel. `wbcheck report . --sarif out.sarif` writes SARIF 2.1.0
+  for the SARIF Viewer extension.
+
+### Inline notes: `--annotate`
+
+`wbcheck fix --annotate` writes each finding into the file as a comment above
+the flagged block (`<!-- wbcheck WB213: ... -->`, or a `#` comment in front
+matter). It's opt-in because it edits your files. Running it twice adds
+nothing, notes never go inside code fences, and Workbench doesn't render them.
+`wbcheck fix --clean-annotations` removes exactly the notes wbcheck wrote.
+While any remain, `wbcheck check` warns (WB115); `--fail-on annotations` makes
+that a failure for CI. Details and limits: [`editors/README.md`](editors/README.md).
 
 ### Automatic fixes: `--apply` and `--suggest`
 
@@ -298,6 +321,8 @@ wbcheck report LESSON                              # terminal
 wbcheck report LESSON --md report.md --json results.json
 wbcheck report LESSON --html report.html --open    # needs Quarto
 wbcheck report LESSON --pdf report.pdf             # needs Quarto + LaTeX
+wbcheck report LESSON --sarif out.sarif            # SARIF 2.1.0 (`-` for stdout)
+wbcheck report LESSON --lines -                    # file:line:col: severity CODE message
 ```
 
 Renders saved results without re-checking. Every format opens with the tool
@@ -363,6 +388,7 @@ aid.
 | `WB112` | error | placeholder text in questions/objectives/keypoints |
 | `WB113` | warning | setup/instructor notes/profiles still the scaffold |
 | `WB114` | warning | glossary is still the scaffold placeholder |
+| `WB115` | warning | wbcheck note (from `fix --annotate`) left in a lesson file |
 | `WB201` | info | unrecognized div type |
 | `WB202` | error | closing ::: with no matching open div |
 | `WB203` | error | div never closed |
