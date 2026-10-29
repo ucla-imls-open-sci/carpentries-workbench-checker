@@ -40,12 +40,21 @@ from checker.report import (
 )
 from checker.results import Results, default_results_path, load
 
+HELP_EPILOG = (
+    "Exit codes: 0 = done, nothing at or above --fail-on. 1 = findings at or above --fail-on. "
+    "2 = could not run (usage error, path not a lesson, needs a terminal).\n\n"
+    "Docs: https://github.com/ucla-imls-open-sci/carpentries-workbench-checker#readme  "
+    "Problems: https://github.com/ucla-imls-open-sci/carpentries-workbench-checker/issues"
+)
+
 app = typer.Typer(
     name="wbcheck",
     help="Fast local checks for Carpentries Workbench lessons, with an optional AI review.",
+    epilog=HELP_EPILOG,
     no_args_is_help=True,
     add_completion=True,
     rich_markup_mode="rich",
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 
 # Diagnostics go to stderr so stdout stays clean for piping a report.
@@ -65,6 +74,25 @@ def _main(
     ] = False,
 ) -> None:
     pass
+
+
+def _has_terminal() -> bool:
+    """Whether both stdin and stdout are terminals, so prompts and full-screen
+    views can work. Tests replace this."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _require_terminal(what: str, instead: str, no_input: bool = False) -> None:
+    """Exit 2 with a plain message instead of hanging when `what` needs a
+    person at a terminal and there isn't one (clig.dev: only prompt in a TTY)."""
+    if no_input:
+        why = "--no-input was passed"
+    elif not _has_terminal():
+        why = "stdin or stdout is not a terminal"
+    else:
+        return
+    err.print(f"[red]{what} needs a terminal[/] ({why}). {instead}")
+    raise typer.Exit(2)
 
 
 def _load_ignore_or_exit(lesson_dir: Path) -> IgnoreRules:
@@ -100,6 +128,12 @@ def _refresh(
 
     lesson_dir, tmp = _resolve_target(target)
     is_clone = tmp is not None
+    if not (lesson_dir / "episodes").is_dir() and not (lesson_dir / "config.yaml").is_file():
+        if tmp is not None:
+            tmp.cleanup()
+        err.print(f"[red]{lesson_dir} doesn't look like a Workbench lesson[/] (no episodes/ and no config.yaml). "
+                  "Nothing was written.")
+        raise typer.Exit(2)
     path = results_path_for(normalize_target(target, lesson_dir, is_clone), lesson_dir, is_clone, results_override)
     try:
         results, notes = refresh(target, lesson_dir, is_clone, path, episode=episode, blame=blame)
@@ -131,7 +165,10 @@ def check(
     results_path: Annotated[
         Path | None, typer.Option("--results", help="Where to save results (default: <lesson>/.wbcheck/results.json).")
     ] = None,
-    show_source: Annotated[bool, typer.Option("--source", help="Show the source line under each finding.")] = False,
+    show_source: Annotated[
+        bool, typer.Option("--show-source", help="Show the source line under each finding.")
+    ] = False,
+    legacy_source: Annotated[bool, typer.Option("--source", hidden=True)] = False,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Save results without printing the report.")] = False,
     fail_on: Annotated[
         str,
@@ -149,7 +186,16 @@ def check(
 
     --changed narrows what's shown and what counts toward the exit code; the
     saved results still hold every finding, for the TUI, reports, and issues.
+
+    Examples:
+
+      wbcheck check .                        check this lesson
+      wbcheck check . --fail-on warning      for CI: exit 1 on warnings too
+      wbcheck check . --changed --since main only what this branch touched
     """
+    if legacy_source:
+        err.print("[yellow]--source is now --show-source[/] (the old name still works for now)")
+        show_source = True
     if fail_on not in FAIL_ON:
         err.print(f"[red]--fail-on must be one of {', '.join(FAIL_ON)}[/], got `{fail_on}`")
         raise typer.Exit(2)
@@ -164,6 +210,8 @@ def check(
     finally:
         if tmp is not None:
             tmp.cleanup()
+    if episode and any(f.code == "WB012" for f in shown.findings):
+        raise typer.Exit(2)  # --episode named a file that isn't there: could not run
     raise typer.Exit(1 if _fails(shown, fail_on) else 0)
 
 
@@ -349,9 +397,23 @@ def report(
                      "matchers). `-` is stdout."),
     ] = None,
     open_html: Annotated[bool, typer.Option("--open", help="Open the HTML report in a browser.")] = False,
-    show_source: Annotated[bool, typer.Option("--source", help="Show the source line under each finding.")] = False,
+    show_source: Annotated[
+        bool, typer.Option("--show-source", help="Show the source line under each finding.")
+    ] = False,
+    legacy_source: Annotated[bool, typer.Option("--source", hidden=True)] = False,
 ) -> None:
-    """Render saved results. With no output options, prints to the terminal."""
+    """Render saved results. With no output options, prints to the terminal.
+
+    Examples:
+
+      wbcheck report . --md report.md        a markdown report
+      wbcheck report . --json -              results JSON on stdout, for scripts
+      wbcheck report . --sarif out.sarif     for the SARIF Viewer
+      wbcheck report . --lines -             file:line:col lines for editors
+    """
+    if legacy_source:
+        err.print("[yellow]--source is now --show-source[/] (the old name still works for now)")
+        show_source = True
     path = results_path or default_results_path(lesson)
     if not path.exists():
         err.print(f"[red]no results at[/] {path}. Run [bold]wbcheck check {lesson}[/] first.")
@@ -372,6 +434,9 @@ def report(
         lesson_dir = Path(results.lesson_dir) if results.lesson_dir else None
         _write_or_print(lines_out, "".join(f"{x}\n" for x in editor_lines(results.findings, lesson_dir)))
 
+    if any(x is not None and str(x) == "-" for x in (html, pdf)):
+        err.print("[red]--html and --pdf need a file name[/]; only --md, --json, --sarif and --lines take `-`")
+        raise typer.Exit(2)
     wrote_file = any(x is not None for x in (md, html, pdf, json_out, sarif, lines_out))
     if not wrote_file:
         render_results(Console(), results, show_source=show_source)
@@ -396,11 +461,9 @@ def report(
         else results.title
     )
     if md is not None:
-        md.write_text(md_text)
-        err.print(f"[dim]wrote {md}[/]")
+        _write_or_print(md, md_text)
     if json_out is not None:
-        json_out.write_text(results.to_json())
-        err.print(f"[dim]wrote {json_out}[/]")
+        _write_or_print(json_out, results.to_json())
     rendered_html = None
     if html is not None:
         rendered_html = _quarto_render("HTML", render_html_via_quarto, md_text, html, qmd_title)
@@ -516,6 +579,8 @@ def issues(
     if not create:
         err.print("[dim]dry run: nothing filed. Add --preview to read the bodies, --create to file them.[/]")
         return
+    if not yes:
+        _require_terminal("Confirming `issues --create`", "Add --yes to file without asking.")
     if not yes and not typer.confirm(f"File {len(drafts)} issue(s) in {target_repo}?", default=False):
         err.print("not filed")
         raise typer.Exit(1)
@@ -545,6 +610,7 @@ def tui(
     """
     from checker.tui import run
 
+    _require_terminal("wbcheck tui", "Use `wbcheck report`, or `wbcheck fix --print`, in scripts.")
     path = results_path or default_results_path(lesson)
     if not path.exists():
         if results_path is not None:
@@ -596,6 +662,9 @@ def fix(
     clean_annotations: Annotated[
         bool, typer.Option("--clean-annotations", help="Remove the notes `--annotate` wrote, and only those.")
     ] = False,
+    no_input: Annotated[
+        bool, typer.Option("--no-input", help="Never prompt or open an editor: exit 2 if the mode needs one.")
+    ] = False,
 ) -> None:
     """Work through findings in your editor, or apply the safe automatic fixes.
 
@@ -614,6 +683,16 @@ def fix(
     (`<!-- wbcheck CODE: message -->`), for editors with no problems panel.
     Running it twice adds nothing. --clean-annotations removes them. Until
     you do, `wbcheck check` warns about each one (WB115).
+
+    Needs a terminal, except --print, --annotate, --clean-annotations and
+    --apply --yes, which never prompt.
+
+    Examples:
+
+      wbcheck fix .                          work through findings in $EDITOR
+      wbcheck fix . --print                  quickfix lines, for `nvim -q`
+      wbcheck fix . --apply --yes            safe fixes without asking
+      wbcheck fix . --annotate               write findings into the files
     """
     import fnmatch
     import os
@@ -631,6 +710,10 @@ def fix(
     if not (lesson_dir / "episodes").is_dir():
         err.print(f"[red]{lesson_dir} doesn't look like a lesson[/] (no episodes/)")
         raise typer.Exit(2)
+    never_prompts = print_only or annotate or clean_annotations or (apply and yes and not suggest)
+    if not never_prompts:
+        _require_terminal("This mode of `wbcheck fix`", "Use --print, --annotate, or --apply --yes in scripts.",
+                          no_input)
 
     if clean_annotations:
         from checker.annotate import clean_annotations as remove_notes

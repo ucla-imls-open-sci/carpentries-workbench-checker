@@ -44,11 +44,13 @@ def _resolve_target(target: str) -> tuple[Path, tempfile.TemporaryDirectory | No
         )
         if result.returncode != 0:
             tmp.cleanup()
-            raise SystemExit(f"failed to clone {target}: {result.stderr.strip()}")
+            print(f"failed to clone {target}: {result.stderr.strip()}", file=sys.stderr)
+            raise SystemExit(2)
         return dest, tmp
     path = Path(target).expanduser().resolve()
     if not path.exists():
-        raise SystemExit(f"path not found: {path}")
+        print(f"path not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
     return path, None
 
 

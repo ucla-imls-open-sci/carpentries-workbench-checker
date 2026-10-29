@@ -40,6 +40,11 @@ LESSON_DIRS = ("episodes", "learners", "instructors", "profiles")
 MAX_NOTE_TEXT = 200
 
 _HTML_NOTE_RE = re.compile(r"^(?P<indent>\s*)<!-- wbcheck (?P<code>[A-Z]+\d+): (?P<text>.*) -->\s*$")
+_CODES = r"(?P<codes>[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)"
+_REASON = r"(?:\s*:\s*(?P<reason>.*?))?"
+# `<!-- wbcheck-ignore WB404: quoted data -->`, or `# wbcheck-ignore WB104: ...` in front matter
+_HTML_IGNORE_RE = re.compile(rf"^\s*<!--\s*wbcheck-ignore(?P<file>-file)?\s+{_CODES}{_REASON}\s*-->\s*$")
+_YAML_IGNORE_RE = re.compile(rf"^#\s*wbcheck-ignore(?P<file>-file)?\s+{_CODES}{_REASON}\s*$")
 _YAML_NOTE_RE = re.compile(r"^# wbcheck (?P<code>[A-Z]+\d+): (?P<text>.*?)\s*$")
 _DIV_FENCE_RE = re.compile(r"^\s*:{3,}")
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}(\s|$)")
@@ -71,6 +76,40 @@ def _note_match(lines: list[str], i: int, fm_end: int | None, starts: list[int |
     return _HTML_NOTE_RE.match(lines[i].rstrip("\r"))
 
 
+def _directive_match(lines: list[str], i: int, fm_end: int | None, starts: list[int | None]):
+    """The inline-ignore regex match for line `i`, or None (same placement
+    rules as `_note_match`)."""
+    if fm_end is not None and i <= fm_end:
+        return _YAML_IGNORE_RE.match(lines[i].rstrip("\r")) if i > 0 else None
+    if starts[i] is not None:
+        return None
+    return _HTML_IGNORE_RE.match(lines[i].rstrip("\r"))
+
+
+def inline_ignores(text: str) -> tuple[set[str], dict[int, set[str]]]:
+    """Inline `wbcheck-ignore` directives in one file: the codes ignored for
+    the whole file (`wbcheck-ignore-file`), and codes ignored on a given
+    1-indexed line (the next non-blank line after the directive)."""
+    if "wbcheck-ignore" not in text:
+        return set(), {}
+    lines, fm_end, starts = _scan(text)
+    file_codes: set[str] = set()
+    by_line: dict[int, set[str]] = {}
+    for i in range(len(lines)):
+        match = _directive_match(lines, i, fm_end, starts)
+        if not match:
+            continue
+        codes = {c.strip() for c in match["codes"].split(",")}
+        if match["file"]:
+            file_codes |= codes
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        by_line.setdefault(j + 1, set()).update(codes)
+    return file_codes, by_line
+
+
 def _scan(text: str) -> tuple[list[str], int | None, list[int | None]]:
     from checker.lesson_check import _code_fence_starts
 
@@ -83,13 +122,13 @@ def _scan(text: str) -> tuple[list[str], int | None, list[int | None]]:
 
 
 def blank_notes(text: str) -> str:
-    """`text` with each note line emptied (not removed), so checks never see
-    a note and every line number is unchanged."""
-    if "wbcheck " not in text:
+    """`text` with each note and inline-ignore line emptied (not removed), so
+    checks never see them and every line number is unchanged."""
+    if "wbcheck" not in text:
         return text
     lines, fm_end, starts = _scan(text)
     for i in range(len(lines)):
-        if _note_match(lines, i, fm_end, starts):
+        if _note_match(lines, i, fm_end, starts) or _directive_match(lines, i, fm_end, starts):
             lines[i] = ""
     return "\n".join(lines)
 
