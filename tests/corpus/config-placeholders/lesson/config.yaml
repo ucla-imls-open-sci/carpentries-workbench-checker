@@ -1,0 +1,7 @@
+title: 'Lesson Title'
+contact: 'team@carpentries.org'
+source: 'https://github.com/carpentries/workbench-template-md'
+life_cycle: 'pre-alpha'
+episodes:
+- 01-intro.md
+- ghost.md

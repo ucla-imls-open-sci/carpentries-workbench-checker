@@ -43,7 +43,7 @@ pixi run test
 
 Runs with no network, models, gh, or Quarto: the AI backends, gh, and the
 editor are faked, and the TUI is driven headlessly. Also run `pixi run lint`.
-If you're changing a check, add a regression test alongside the fix; several
+If you're changing a check, add a regression test alongside the fix, and a lesson to `tests/corpus/` if it is a new kind of case (see `tests/corpus/README.md`; `WBCHECK_UPDATE_CORPUS=1` rewrites the expected files, so read their diff); several
 existing tests exist because a real lesson surfaced a bug the synthetic cases
 missed (see commit history for examples). Running your change against a real
 lesson or two under `wbcheck check` is still worth doing.

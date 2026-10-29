@@ -10,7 +10,20 @@ Editor integration (design/2026-10-29-editor-integration-prompt.md). No change t
 - **`wbcheck fix --annotate`** writes `<!-- wbcheck CODE: message -->` above the flagged block (a YAML comment in front matter). It is idempotent, stays out of code fences, hoists above a list or a div title so rendering doesn't change, and skips a front-matter note that would change the parsed YAML. **`--clean-annotations`** removes only those notes and restores the file byte for byte.
 - **WB115**: a leftover wbcheck note is a warning in `wbcheck check`. **`--fail-on annotations`** exits 1 on errors and leftover notes.
 
+### Fixed (from design/2026-10-29-cli-best-practices-assessment.md)
+- `wbcheck fix` and `wbcheck tui` no longer hang without a terminal. They exit 2 and say what to use instead. `fix --no-input` refuses any mode that would prompt or open an editor. `--print`, `--annotate`, `--clean-annotations` and `--apply --yes` still work in scripts. `issues --create` without `--yes` needs a terminal too.
+- `report --json -` and `--md -` write to stdout. They used to create a file named `-`. `--html -` and `--pdf -` are rejected.
+- Exit code 2 now means "could not run" for a missing path, a failed clone, a folder with no `episodes/` or `config.yaml` (nothing is written into it), and `--episode` naming a missing file. These were 1, the same as "findings". The codes are in the README and the top-level help.
+- `-h` works on every command. Top-level help links to the docs and the issue tracker. `check`, `fix` and `report` help show examples.
+
+### Added
+- Regression corpus (`tests/corpus/`): 15 small lessons with the exact findings expected (code, severity, file, line, finding ID), covering every content rule, plus `clean` and `tricky-valid` lessons that must report nothing. A check that starts or stops firing, moves, or has its message reworded fails the test. See `tests/corpus/README.md`.
+- Test that 13 command forms finish with stdin closed instead of hanging.
+- `scripts/render_safety.py LESSON`: builds a lesson with sandpaper with and without `fix --annotate` notes and compares the HTML (needs R and sandpaper; not part of `pixi run test`).
+- Inline ignore: `<!-- wbcheck-ignore WB404: reason -->` ignores a code on the next non-blank line, `wbcheck-ignore-file CODE` for the whole file (a `#` comment in front matter). Counted as ignored; never read by the checks.
+
 ### Changed
+- `check` and `report` `--source` is now `--show-source`, so it no longer clashes with `fix` and `issues --source all|mechanical|ai`. `--source` still works on those two, hidden, with a warning.
 - Checks and the AI review now ignore wbcheck notes, so a note never creates a finding or reaches a model.
 - Internal: `_code_fence_mask` is built on a new `_code_fence_starts`; its output is unchanged.
 

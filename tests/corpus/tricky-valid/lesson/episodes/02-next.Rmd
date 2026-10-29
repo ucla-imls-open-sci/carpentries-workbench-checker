@@ -1,0 +1,20 @@
+---
+title: 'Ep'
+teaching: 15
+exercises: 10
+---
+:::::: questions
+- A question?
+::::::
+
+:::::: objectives
++ Explain the idea.
+::::::
+
+## R content
+
+Text.
+
+:::::: keypoints
+- A point.
+::::::

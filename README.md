@@ -87,7 +87,7 @@ option.
 ```bash
 wbcheck check LESSON
 wbcheck check LESSON --episode 03-sharing.md   # one episode
-wbcheck check LESSON --source                  # show the offending line under each finding
+wbcheck check LESSON --show-source             # show the offending line under each finding (was --source)
 wbcheck check LESSON --blame                   # record who last changed each file with findings
 wbcheck check LESSON --fail-on warning         # exit 1 on warnings too (also: info, never)
 wbcheck check LESSON --fail-on annotations     # exit 1 on errors and leftover `fix --annotate` notes
@@ -99,6 +99,17 @@ Findings are grouped by file, each with its [rule code](#rule-codes-and-wbcheck-
 message, and fix. In terminals with hyperlinks, the code links to the guide
 section behind the rule. It exits `1` if anything is at or above `--fail-on`
 (default `error`), so it works in a pre-commit hook or CI.
+
+Exit codes, the same for every command:
+
+| Code | Meaning |
+|---|---|
+| `0` | Ran, and nothing is at or above `--fail-on` |
+| `1` | Ran, and found something at or above `--fail-on` |
+| `2` | Could not run: bad option, a path that isn't a lesson, `--episode` names a missing file, or the mode needs a terminal and there isn't one |
+
+`-h` works like `--help` on every command. `wbcheck check` never writes into a
+folder that has neither `episodes/` nor `config.yaml`.
 
 With `--changed`, only findings in changed files are shown and counted
 toward the exit code. That makes this a good pre-push check, holding your
@@ -431,6 +442,24 @@ A few details:
   (CLDT) and the [Carpentries Lab reviewer](https://github.com/carpentries-lab/reviews/blob/main/docs/reviewer_guide.md)
   and editor checklists, not from sandpaper. `wbcheck explain` cites the
   exact section for each.
+
+### Ignoring findings: inline comments
+
+To ignore one finding where it happens, put a comment above it. The reason is
+optional but worth writing:
+
+```markdown
+<!-- wbcheck-ignore WB404: quoted learner data, not prose -->
+This line is the one WB404 would report.
+
+<!-- wbcheck-ignore-file WB213, WB401: transcript of a recorded session -->
+```
+
+`wbcheck-ignore CODE` covers that code on the next non-blank line.
+`wbcheck-ignore-file CODE[, CODE]` covers the whole file. In front matter use
+a `#` comment. Comments inside code blocks are ignored, and wbcheck's own
+checks never read these comment lines. Ignored findings are counted in the
+saved results, as with `.wbcheck.toml`.
 
 ### Ignoring findings: `.wbcheck.toml`
 

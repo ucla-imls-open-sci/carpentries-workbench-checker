@@ -7,6 +7,13 @@ collaborators share them (issue #23).
     paths = ["episodes/all_exercises.md"]  # every finding in these files (globs ok)
     ids = ["8289307d05d3"]                 # single findings, by stable ID
 
+Or in the file itself, with an optional reason (Markdown, or a `#` comment in
+front matter). The first form ignores the code on the next non-blank line,
+the second everywhere in that file:
+
+    <!-- wbcheck-ignore WB404: quoted learner data, not prose -->
+    <!-- wbcheck-ignore-file WB404: transcript of a recorded session -->
+
 `wbcheck check` and `wbcheck review` drop matching findings before saving
 results. The TUI's ignore key appends IDs here; the file is then rewritten
 in this canonical form, so hand-written comments inside it are not kept.
@@ -31,11 +38,28 @@ class IgnoreRules:
     codes: set[str] = field(default_factory=set)
     paths: list[str] = field(default_factory=list)
     ids: set[str] = field(default_factory=set)
+    lesson_dir: Path | None = None  # where inline `wbcheck-ignore` comments are read from
+    _inline: dict[str, tuple[set[str], dict[int, set[str]]]] = field(default_factory=dict, repr=False)
+
+    def _inline_for(self, location: str) -> tuple[set[str], dict[int, set[str]]]:
+        if self.lesson_dir is None or not location.endswith((".md", ".Rmd")):
+            return set(), {}
+        if location not in self._inline:
+            from checker.annotate import inline_ignores
+
+            path = self.lesson_dir / location
+            text = path.read_text(errors="replace") if path.is_file() else ""
+            self._inline[location] = inline_ignores(text)
+        return self._inline[location]
 
     def matches(self, f: Finding) -> bool:
         """Whether `f` is suppressed by any rule."""
         if f.id in self.ids or (f.code and f.code in self.codes):
             return True
+        if f.location and f.code:
+            file_codes, by_line = self._inline_for(f.location)
+            if f.code in file_codes or (f.line is not None and f.code in by_line.get(f.line, ())):
+                return True
         return bool(f.location) and any(fnmatch.fnmatch(f.location or "", pattern) for pattern in self.paths)
 
     def apply(self, findings: list[Finding]) -> tuple[list[Finding], int]:
@@ -51,7 +75,7 @@ def load_ignore(lesson_dir: Path | None) -> IgnoreRules:
         return IgnoreRules()
     path = lesson_dir / IGNORE_FILENAME
     if not path.exists():
-        return IgnoreRules()
+        return IgnoreRules(lesson_dir=lesson_dir)
     try:
         data = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as exc:
@@ -61,6 +85,7 @@ def load_ignore(lesson_dir: Path | None) -> IgnoreRules:
         codes={str(c) for c in section.get("codes") or []},
         paths=[str(p) for p in section.get("paths") or []],
         ids={str(i) for i in section.get("ids") or []},
+        lesson_dir=lesson_dir,
     )
 
 
