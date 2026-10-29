@@ -1,0 +1,30 @@
+[
+ [
+  "WB301",
+  "warning",
+  "episodes/01.md",
+  16,
+  "9b9f24feb43e"
+ ],
+ [
+  "WB302",
+  "error",
+  "episodes/01.md",
+  18,
+  "0b9a21530bee"
+ ],
+ [
+  "WB303",
+  "warning",
+  "episodes/01.md",
+  20,
+  "1a89ef96af8d"
+ ],
+ [
+  "WB304",
+  "warning",
+  "episodes/01.md",
+  22,
+  "3d0a1f11fd26"
+ ]
+]

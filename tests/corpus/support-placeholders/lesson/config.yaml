@@ -1,0 +1,7 @@
+title: 'Corpus Lesson'
+contact: 'author@example.org'
+created: 2026-01-01
+source: 'https://example.org/lesson'
+life_cycle: 'alpha'
+episodes:
+- 01-intro.md

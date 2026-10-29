@@ -17,6 +17,9 @@ Editor integration (design/2026-10-29-editor-integration-prompt.md). No change t
 - `-h` works on every command. Top-level help links to the docs and the issue tracker. `check`, `fix` and `report` help show examples.
 
 ### Added
+- Regression corpus (`tests/corpus/`): 15 small lessons with the exact findings expected (code, severity, file, line, finding ID), covering every content rule, plus `clean` and `tricky-valid` lessons that must report nothing. A check that starts or stops firing, moves, or has its message reworded fails the test. See `tests/corpus/README.md`.
+- Test that 13 command forms finish with stdin closed instead of hanging.
+- `scripts/render_safety.py LESSON`: builds a lesson with sandpaper with and without `fix --annotate` notes and compares the HTML (needs R and sandpaper; not part of `pixi run test`).
 - Inline ignore: `<!-- wbcheck-ignore WB404: reason -->` ignores a code on the next non-blank line, `wbcheck-ignore-file CODE` for the whole file (a `#` comment in front matter). Counted as ignored; never read by the checks.
 
 ### Changed
