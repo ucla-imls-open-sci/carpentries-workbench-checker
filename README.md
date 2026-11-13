@@ -86,7 +86,8 @@ option.
 
 ```bash
 wbcheck check LESSON
-wbcheck check LESSON --episode 03-sharing.md   # one episode
+wbcheck check LESSON --episode 03-sharing.md   # one episode (or episodes/03-sharing.md)
+wbcheck check LESSON --json                    # checked results as JSON on stdout
 wbcheck check LESSON --show-source             # show the offending line under each finding (was --source)
 wbcheck check LESSON --blame                   # record who last changed each file with findings
 wbcheck check LESSON --fail-on warning         # exit 1 on warnings too (also: info, never)
@@ -204,9 +205,9 @@ decide. Each asks on its own (default no), and `--yes` never applies them.
 | Code | Suggestion | Why it's your call |
 |---|---|---|
 | `WB401` | replace a vague objective opener with an observable verb (Understand → Explain, Know → Identify, ...), keeping the rest verbatim | it changes what the objective promises, and it still needs an exercise that assesses it |
-| `WB009` | add an unlisted episode to `config.yaml`'s `episodes:`, never when the file looks like reference content (`WB013`, re-checked from the file itself) | Workbench lets you leave drafts unlisted on purpose; listing one publishes it |
+| `WB009` | add an unlisted episode to `config.yaml`'s `episodes:`, never when the file looks like reference content (`WB013`) or still has scaffold text (`WB110`/`WB111`) | Workbench lets you leave drafts unlisted on purpose; listing one publishes it |
 
-Use both with `--apply --suggest`, then review with `git diff`.
+Use both with `--apply --suggest`, then review with `git diff`. Pass `--dry-run` (or `--diff`) with `--apply` or `--suggest` to print the unified diffs to stdout without editing files or prompting.
 
 ## The AI review: `wbcheck review`
 
@@ -334,9 +335,12 @@ wbcheck report LESSON --html report.html --open    # needs Quarto
 wbcheck report LESSON --pdf report.pdf             # needs Quarto + LaTeX
 wbcheck report LESSON --sarif out.sarif            # SARIF 2.1.0 (`-` for stdout)
 wbcheck report LESSON --lines -                    # file:line:col: severity CODE message
+wbcheck report LESSON --code WB213 --episode 01.md --json -  # filter any report format
 ```
 
-Renders saved results without re-checking. Every format opens with the tool
+Renders saved results without re-checking. Filter any output format with
+`--episode`, `--code` (repeatable), `--file` (glob), `--min-severity`,
+`--source all|mechanical|ai`, or `--changed` / `--since REF`. Every format opens with the tool
 version and the lesson's metadata from `config.yaml` and `CITATION.cff`, so a
 report handed to someone else identifies itself. The markdown, HTML, and PDF
 reports have three parts: a checklist of files, an action summary with one
@@ -355,9 +359,10 @@ Every check has a stable code, defined once in
 
 ```bash
 wbcheck explain WB403               # or a name: wbcheck explain objectives-not-assessed
+wbcheck explain WB403 --json        # structured JSON for scripts and AI agents
 wbcheck rules                       # every rule: code, default severity, topic, title
 wbcheck rules --search alt          # rules mentioning some text
-wbcheck rules --topic accessibility
+wbcheck rules --topic accessibility --json
 ```
 
 `explain` shows what the check observes, why it matters, what to do, when

@@ -953,3 +953,22 @@ def test_sandpaper_generated_html_links_are_not_flagged(tmp_path):
     (lesson / "profiles" / "learner-profiles.md").unlink()
     findings_missing = _check_links("[personas](profiles.html)\n", lesson, "episodes/01.md")
     assert [f.code for f in findings_missing] == ["WB304"]
+
+
+def test_citation_fixme_glossary_tbd_and_table_todo_are_flagged(tmp_path):
+    lesson = tmp_path / "lesson"
+    (lesson / "episodes").mkdir(parents=True)
+    (lesson / "learners").mkdir()
+    (lesson / "CITATION.cff").write_text("cff-version: 1.2.0\ntitle: FIXME\n")
+    (lesson / "learners" / "reference.md").write_text("## Glossary\n\nTerm\n: TBD\n")
+    support_findings = {f.code: f for f in check_support_files(lesson)}
+    assert support_findings["WB113"].location == "CITATION.cff" and support_findings["WB113"].line == 2
+    assert support_findings["WB114"].location == "learners/reference.md" and support_findings["WB114"].line == 4
+
+    ep = lesson / "episodes" / "01.md"
+    ep.write_text(
+        f"---\ntitle: 'Ep'\nteaching: 10\nexercises: 5\n---\n{VALID_EPISODE_BODY}\n"
+        "| A | B |\n|---|---|\n| TODO | TODO |\n"
+    )
+    ep_findings = [f for f in check_episode(ep, lesson) if f.code == "WB112"]
+    assert len(ep_findings) == 1 and "table row" in ep_findings[0].message

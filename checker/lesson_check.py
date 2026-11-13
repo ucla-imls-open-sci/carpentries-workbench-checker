@@ -180,7 +180,15 @@ SUPPORT_FILE_CHECKS = {
         "Add at least one realistic learner profile, used to sanity-check exercise "
         "difficulty against your stated audience.",
     ),
+    "CITATION.cff": (
+        "fixme",
+        "Replace the template FIXME placeholders in CITATION.cff with your lesson's title, "
+        "authors, and repository URL (or run `sandpaper::create_citation()`).",
+    ),
 }
+
+_GLOSSARY_TBD_RE = re.compile(r"^\s*:\s*(?:TBD|TODO|FIXME)\s*$", re.IGNORECASE | re.MULTILINE)
+_TABLE_PLACEHOLDER_RE = re.compile(r"^\|(?:\s*(?:TODO|TBD|FIXME)\s*\|)+\s*$", re.IGNORECASE)
 
 # Collaborative Lesson Development Training (carpentries.github.io/lesson-development-training)
 # and The Carpentries Lab reviewer checklist (github.com/carpentries-lab/reviews) both call out
@@ -680,16 +688,27 @@ def check_support_files(lesson_dir: Path) -> list[Finding]:
     glossary_path = resolve_glossary_path(lesson_dir)
     if glossary_path is not None:
         full_path = lesson_dir / glossary_path
-        text_lower = full_path.read_text(errors="replace").lower()
+        raw_text = full_path.read_text(errors="replace")
+        text_lower = raw_text.lower()
         idx = text_lower.find(GLOSSARY_PLACEHOLDER_FINGERPRINT)
-        if idx != -1:
+        tbd_matches = list(_GLOSSARY_TBD_RE.finditer(raw_text)) if idx == -1 else []
+        if idx != -1 or tbd_matches:
+            if idx != -1:
+                lineno = text_lower.count("\n", 0, idx) + 1
+                msg = f"{glossary_path} is still the scaffold placeholder, not written yet"
+            else:
+                lineno = raw_text.count("\n", 0, tbd_matches[0].start()) + 1
+                msg = (
+                    f"{glossary_path} still has {len(tbd_matches)} unwritten placeholder "
+                    f"definition(s) (first on line {lineno}: `{tbd_matches[0].group(0).strip()}`)"
+                )
             findings.append(
                 Finding(
                     "warning",
                     "boilerplate",
-                    f"{glossary_path} is still the scaffold placeholder, not written yet",
+                    msg,
                     location=glossary_path,
-                    line=text_lower.count("\n", 0, idx) + 1,
+                    line=lineno,
                     hint=GLOSSARY_HINT,
                     code="WB114",
                 )
@@ -1048,29 +1067,37 @@ def _check_placeholder_bullets(body: str, location: str, line_offset: int = 0) -
                     tracked_type = None
             continue
 
-        if tracked_type is None:
-            continue
         stripped = line.strip()
-        marker_match = _BULLET_MARKER_RE.match(stripped)
-        if not marker_match:
-            continue
-        bullet_raw = stripped[marker_match.end():].strip()
-        normalized = _normalize_bullet_text(bullet_raw)
-        if _is_placeholder_bullet(normalized.lower()):
-            reported_line = i + 1 + line_offset
-            findings.append(
-                Finding(
-                    "error",
-                    "boilerplate",
-                    f'`{tracked_type}` still has placeholder bullet text on line '
-                    f'{reported_line}: "{bullet_raw}"',
-                    location=location,
-                    line=reported_line,
-                    hint="Replace with real content. This is scaffold placeholder text, not a "
-                    "written keypoint, objective, or question.",
-                    code="WB112",
-                )
+        reported_line = i + 1 + line_offset
+        if tracked_type is None:
+            if _TABLE_PLACEHOLDER_RE.match(stripped):
+                placeholder_msg = f'table row still has placeholder text on line {reported_line}: "{stripped}"'
+            else:
+                continue
+        else:
+            marker_match = _BULLET_MARKER_RE.match(stripped)
+            if not marker_match:
+                continue
+            bullet_raw = stripped[marker_match.end():].strip()
+            normalized = _normalize_bullet_text(bullet_raw)
+            if not _is_placeholder_bullet(normalized.lower()):
+                continue
+            placeholder_msg = (
+                f'`{tracked_type}` still has placeholder bullet text on line '
+                f'{reported_line}: "{bullet_raw}"'
             )
+        findings.append(
+            Finding(
+                "error",
+                "boilerplate",
+                placeholder_msg,
+                location=location,
+                line=reported_line,
+                hint="Replace with real content. This is scaffold placeholder text, not a "
+                "written keypoint, objective, or question.",
+                code="WB112",
+            )
+        )
     return findings
 
 

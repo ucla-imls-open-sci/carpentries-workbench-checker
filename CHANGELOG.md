@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-12)
 
-Editor integration (design/2026-10-29-editor-integration-prompt.md). No change to existing commands unless you pass a new flag.
+Editor integration, CLI hardening, regression corpus, and AI-client CLI ergonomics.
 
 ### Added
 - **`wbcheck report --sarif FILE`** writes SARIF 2.1.0 (rules, levels, finding IDs as fingerprints) for the VS Code and Positron SARIF Viewer. **`--lines FILE`** writes `file:line:col: severity CODE message` for editor problem matchers. `-` means stdout for both.
@@ -18,6 +18,7 @@ Editor integration (design/2026-10-29-editor-integration-prompt.md). No change t
 - `report --html`/`--pdf` now exits 1 when Quarto fails to render, and `doctor` exits 1 when a core tool (`git`) is missing.
 - Populated source line numbers on `WB004`–`WB007`, `WB009`, `WB110`, `WB113`, `WB114`, and `WB205` so `--show-source`, `fix --annotate`, and editor problem matchers jump to the offending line.
 - `fix --suggest` (`WB009`) no longer offers to publish an unlisted episode that still has `WB110`/`WB111` scaffold findings; `fix` sorts errors before warnings; moving a local lesson directory preserves its saved AI findings in `.wbcheck/results.json`; added `CONTEXT.md` and `AGENTS.md`.
+- Extended placeholder checks to flag `FIXME` in `CITATION.cff` (`WB113`), `: TBD`/`: TODO`/`: FIXME` glossary definitions in `learners/reference.md` (`WB114`), and `| TODO |` table rows in episodes (`WB112`).
 
 ### Fixed (from design/2026-10-29-cli-best-practices-assessment.md)
 - `wbcheck fix` and `wbcheck tui` no longer hang without a terminal. They exit 2 and say what to use instead. `fix --no-input` refuses any mode that would prompt or open an editor. `--print`, `--annotate`, `--clean-annotations` and `--apply --yes` still work in scripts. `issues --create` without `--yes` needs a terminal too.
