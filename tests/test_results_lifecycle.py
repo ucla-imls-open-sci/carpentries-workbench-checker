@@ -382,3 +382,17 @@ def test_annotate_and_clean_annotations_keep_ai_findings_fresh_and_sync_results(
     saved_after_clean = load(default_results_path(d))
     assert not any(f.code == "WB115" for f in saved_after_clean.findings)
     assert not ai(saved_after_clean)[0].stale
+
+
+def test_moving_a_lesson_directory_preserves_in_lesson_ai_findings(tmp_path, monkeypatch):
+    d = make_lesson(tmp_path, name="before")
+    monkeypatch.setattr("checker.ai_review.review_episode", fake_review())
+    runner.invoke(app, ["review", str(d)])
+    moved = tmp_path / "after"
+    d.rename(moved)
+    result = runner.invoke(app, ["check", str(moved), "-q"])
+    assert result.exit_code == 0, result.output
+    assert "replaced saved results" not in result.output
+    saved = load(default_results_path(moved))
+    assert saved.target_id == str(moved.resolve())
+    assert len(ai(saved)) == 1 and not ai(saved)[0].stale

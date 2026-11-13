@@ -35,7 +35,7 @@ from checker.cli import _blame_map, _dirty_files, _github_blob_base
 from checker.ignore import load_ignore
 from checker.lesson_check import normalize_episode_name, read_lesson_metadata, run_checks
 from checker.report import Finding, assign_occurrences
-from checker.results import RESULTS_DIRNAME, RESULTS_FILENAME, Results, load, save
+from checker.results import RESULTS_DIRNAME, RESULTS_FILENAME, Results, default_results_path, load, save
 
 _SCP_URL_RE = re.compile(r"^(?:ssh://)?git@([^:/]+)[:/](.+)$")
 
@@ -130,7 +130,9 @@ def _keep_ai_ids(ai: list[Finding]) -> list[Finding]:
     return assign_occurrences(ai)
 
 
-def _same_target(old: Results, target_id: str, target: str) -> bool:
+def _same_target(old: Results, target_id: str, target: str, *, in_lesson_dir: bool = False) -> bool:
+    if in_lesson_dir:
+        return True  # .wbcheck/results.json inside the lesson itself moves with the folder
     if old.target_id:
         return old.target_id == target_id
     return old.target == target  # results saved before target_id existed
@@ -169,7 +171,8 @@ def refresh(
         )
 
     old = _load_existing(path, notes)
-    if old is not None and not _same_target(old, target_id, target):
+    in_lesson = not is_clone and path.resolve() == default_results_path(lesson_dir.resolve())
+    if old is not None and not _same_target(old, target_id, target, in_lesson_dir=in_lesson):
         notes.replaced_target = old.target
         old = None
 

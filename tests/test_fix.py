@@ -107,6 +107,15 @@ def test_autofix_skips_unlisted_file_that_looks_misplaced(tmp_path):
     assert not [f for f in fixes if f.finding.code == "WB009"]
 
 
+def test_autofix_skips_unlisted_scaffold_episode(tmp_path):
+    lesson = make_lesson(tmp_path)
+    (lesson / "episodes" / "introduction.md").write_text(
+        f"---\ntitle: 'Using Markdown'\nteaching: 10\nexercises: 2\n---\n{BODY}"
+    )
+    fixes = plan_autofixes(run_checks(lesson), lesson, AUTOFIX_CODES)
+    assert not [f for f in fixes if f.finding.code == "WB009"]
+
+
 def test_autofix_refuses_a_line_that_changed(tmp_path):
     lesson = make_lesson(tmp_path)
     [fx] = [f for f in plan_autofixes(run_checks(lesson), lesson) if f.finding.code == "WB213"]

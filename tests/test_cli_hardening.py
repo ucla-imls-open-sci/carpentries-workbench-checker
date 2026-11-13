@@ -251,3 +251,37 @@ def test_fix_dry_run_works_without_a_terminal_and_writes_nothing(tmp_path, monke
     assert "-- Understand the difference between copy and sync." in suggest_res.stdout
     assert "+- Explain the difference between copy and sync." in suggest_res.stdout
     assert ep.read_text() == before
+
+
+def test_rules_explain_and_doctor_support_json(monkeypatch):
+    rules_res = runner.invoke(app, ["rules", "--topic", "metadata", "--json"])
+    assert rules_res.exit_code == 0
+    rules_data = json.loads(rules_res.stdout)
+    assert rules_data and all(r["topic"] == "metadata" for r in rules_data)
+
+    explain_res = runner.invoke(app, ["explain", "WB401", "--json"])
+    assert explain_res.exit_code == 0
+    explain_data = json.loads(explain_res.stdout)
+    assert explain_data["code"] == "WB401" and explain_data["fix"] == "editorial"
+
+    doctor_res = runner.invoke(app, ["doctor", "--json"])
+    assert doctor_res.exit_code == 0
+    doctor_data = json.loads(doctor_res.stdout)
+    assert any(row["check"] == "wbcheck" and row["ok"] is True for row in doctor_data)
+
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    doctor_fail = runner.invoke(app, ["doctor", "--json"])
+    assert doctor_fail.exit_code == 1
+
+
+def test_report_html_exits_1_when_quarto_render_fails(tmp_path, monkeypatch):
+    lesson = make_lesson(tmp_path)
+    runner.invoke(app, ["check", str(lesson), "--quiet"])
+
+    def fail_render(*args, **kwargs):
+        raise RuntimeError("quarto exited 1")
+
+    monkeypatch.setattr("checker.app.render_html_via_quarto", fail_render)
+    result = runner.invoke(app, ["report", str(lesson), "--html", str(tmp_path / "r.html")])
+    assert result.exit_code == 1
+    assert "quarto render failed" in result.output

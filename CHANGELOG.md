@@ -14,7 +14,10 @@ Editor integration (design/2026-10-29-editor-integration-prompt.md). No change t
 - `check --episode` no longer duplicates `WB115` findings from other episodes in `.wbcheck/results.json` (which crashed `wbcheck tui`), accepts tab-completed `episodes/<name>.md` paths, and preserves existing saved results when `--episode` names a missing file (exit 2).
 - `fix --annotate` and `fix --clean-annotations` now strip inline notes when hashing Markdown files (keeping AI findings fresh instead of marking them `stale`) and immediately refresh `.wbcheck/results.json`.
 - `WB304` no longer flags links to Sandpaper-generated pages (`profiles.html` when `profiles/learner-profiles.md` exists, `citation.html` when `CITATION.cff` exists, and built-in `aio.html`, `key-points.html`, and `images.html`).
-- Added `check --json`, filter flags on `report` (`--episode`, `--code`, `--file`, `--min-severity`, `--source`, `--changed`, `--since`), and `fix --dry-run` (`--diff`) for non-interactive diff previews.
+- Added `check --json`, `rules --json`, `explain --json`, `doctor --json`, filter flags on `report` (`--episode`, `--code`, `--file`, `--min-severity`, `--source`, `--changed`, `--since`), and `fix --dry-run` (`--diff`) for non-interactive diff previews.
+- `report --html`/`--pdf` now exits 1 when Quarto fails to render, and `doctor` exits 1 when a core tool (`git`) is missing.
+- Populated source line numbers on `WB004`–`WB007`, `WB009`, `WB110`, `WB113`, `WB114`, and `WB205` so `--show-source`, `fix --annotate`, and editor problem matchers jump to the offending line.
+- `fix --suggest` (`WB009`) no longer offers to publish an unlisted episode that still has `WB110`/`WB111` scaffold findings; `fix` sorts errors before warnings; moving a local lesson directory preserves its saved AI findings in `.wbcheck/results.json`; added `CONTEXT.md` and `AGENTS.md`.
 
 ### Fixed (from design/2026-10-29-cli-best-practices-assessment.md)
 - `wbcheck fix` and `wbcheck tui` no longer hang without a terminal. They exit 2 and say what to use instead. `fix --no-input` refuses any mode that would prompt or open an editor. `--print`, `--annotate`, `--clean-annotations` and `--apply --yes` still work in scripts. `issues --create` without `--yes` needs a terminal too.

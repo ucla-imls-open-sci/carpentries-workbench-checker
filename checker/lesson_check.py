@@ -411,6 +411,29 @@ def _unlisted_episode_files(lesson_dir: Path) -> list[str]:
     return [name for name in on_disk if name not in episodes_field]
 
 
+def _config_lines(text: str) -> tuple[dict[str, int], dict[str, int]]:
+    """Top-level key -> 1-indexed line, and episode item -> 1-indexed line in config.yaml."""
+    fields: dict[str, int] = {}
+    ep_items: dict[str, int] = {}
+    in_episodes = False
+    for n, line in enumerate(text.splitlines(), start=1):
+        match = _FM_FIELD_RE.match(line)
+        if match:
+            key = match.group(1)
+            fields.setdefault(key, n)
+            in_episodes = key == "episodes"
+            continue
+        if in_episodes:
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                item = stripped[2:].strip().strip("'\"")
+                if item:
+                    ep_items.setdefault(item, n)
+            elif stripped and not line.startswith((" ", "\t", "#")):
+                in_episodes = False
+    return fields, ep_items
+
+
 def check_config(lesson_dir: Path) -> list[Finding]:
     """Check config.yaml: placeholder values, episode list vs. files on disk,
     extension-less episode files, and glossary existence."""
@@ -428,8 +451,9 @@ def check_config(lesson_dir: Path) -> list[Finding]:
             )
         ]
 
+    raw_text = config_path.read_text(errors="replace")
     try:
-        config = yaml.safe_load(config_path.read_text()) or {}
+        config = yaml.safe_load(raw_text) or {}
     except yaml.YAMLError as exc:
         return [
             Finding(
@@ -454,6 +478,8 @@ def check_config(lesson_dir: Path) -> list[Finding]:
             )
         ]
 
+    field_lines, ep_item_lines = _config_lines(raw_text)
+
     for field, placeholder in CONFIG_PLACEHOLDER_VALUES.items():
         value = config.get(field)
         if not value or value == placeholder:
@@ -463,6 +489,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                     "config",
                     f"`{field}` is still the template placeholder or empty",
                     location="config.yaml",
+                    line=field_lines.get(field),
                     hint=f"Set `{field}` to your lesson's real value.",
                     code="WB004",
                 )
@@ -475,6 +502,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 "config",
                 "`created` date is not set",
                 location="config.yaml",
+                line=field_lines.get("created"),
                 hint="Set `created` to the date the lesson was started (YYYY-MM-DD).",
                 code="WB005",
             )
@@ -487,6 +515,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 "config",
                 "`life_cycle` is still `pre-alpha`",
                 location="config.yaml",
+                line=field_lines.get("life_cycle"),
                 hint="Update life_cycle as the lesson matures: pre-alpha -> alpha -> beta -> stable.",
                 code="WB006",
             )
@@ -512,6 +541,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                 "config",
                 f"config.yaml lists episode `{name}` but it does not exist under episodes/",
                 location="config.yaml",
+                line=ep_item_lines.get(name) or field_lines.get("episodes"),
                 hint="Create the file, or remove it from `episodes:` if it's no longer "
                 "planned.",
                 code="WB007",
@@ -555,6 +585,7 @@ def check_config(lesson_dir: Path) -> list[Finding]:
                     "config",
                     f"episodes/{name} exists but is not listed in config.yaml `episodes:`",
                     location="config.yaml",
+                    line=field_lines.get("episodes"),
                     hint="Leave it unlisted if it's a draft you aren't ready to publish. When it "
                     "is ready, add it to `episodes:`, which publishes it in that position.",
                     code="WB009",
@@ -631,13 +662,16 @@ def check_support_files(lesson_dir: Path) -> list[Finding]:
         path = lesson_dir / rel_path
         if not path.exists():
             continue
-        if fingerprint in path.read_text(errors="replace").lower():
+        text_lower = path.read_text(errors="replace").lower()
+        idx = text_lower.find(fingerprint)
+        if idx != -1:
             findings.append(
                 Finding(
                     "warning",
                     "boilerplate",
                     f"{rel_path} is still the scaffold placeholder, not written yet",
                     location=rel_path,
+                    line=text_lower.count("\n", 0, idx) + 1,
                     hint=hint,
                     code="WB113",
                 )
@@ -646,13 +680,16 @@ def check_support_files(lesson_dir: Path) -> list[Finding]:
     glossary_path = resolve_glossary_path(lesson_dir)
     if glossary_path is not None:
         full_path = lesson_dir / glossary_path
-        if GLOSSARY_PLACEHOLDER_FINGERPRINT in full_path.read_text(errors="replace").lower():
+        text_lower = full_path.read_text(errors="replace").lower()
+        idx = text_lower.find(GLOSSARY_PLACEHOLDER_FINGERPRINT)
+        if idx != -1:
             findings.append(
                 Finding(
                     "warning",
                     "boilerplate",
                     f"{glossary_path} is still the scaffold placeholder, not written yet",
                     location=glossary_path,
+                    line=text_lower.count("\n", 0, idx) + 1,
                     hint=GLOSSARY_HINT,
                     code="WB114",
                 )
@@ -924,7 +961,11 @@ def _objective_hint(bullet_text: str) -> str:
 
 
 def _check_boilerplate(
-    front_matter: dict, body: str, location: str, line_offset: int = 0
+    front_matter: dict,
+    body: str,
+    location: str,
+    line_offset: int = 0,
+    field_lines: dict[str, int] | None = None,
 ) -> list[Finding]:
     """Flag unedited `sandpaper::create_lesson()` scaffold content. The three
     required blocks all being present (so `_check_divs` is silent) says
@@ -949,6 +990,7 @@ def _check_boilerplate(
                 "boilerplate",
                 f'title is still the scaffold default: "{front_matter.get("title")}"',
                 location=location,
+                line=(field_lines or {}).get("title"),
                 hint="This is `sandpaper::create_lesson()`'s own default episode "
                 "title, not a real one. Replace it before this episode is considered "
                 "written.",
@@ -970,9 +1012,8 @@ def _check_boilerplate(
                     location=location,
                     line=lineno,
                     hint="This looks like unedited Workbench scaffold content, not real lesson "
-                    "material. Replace it, or delete the episode if it isn't ready to write "
-                    "yet: an empty episode is more honest than a filled-in-looking one that's "
-                    "still the template.",
+                    "material. Replace it with your episode content, or remove the file if it "
+                    "isn't needed yet.",
                     code="WB111",
                 )
             )
@@ -1450,10 +1491,11 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
         # matter's length.
         line_offset = text[: len(text) - len(body)].count("\n")
 
+    fm_lines = _front_matter_lines(text) if isinstance(parsed, tuple) and isinstance(parsed[0], dict) else {}
     findings.extend(_check_divs(body, location, line_offset))
     findings.extend(_check_headings(body, location, line_offset))
     findings.extend(_check_links(body, lesson_dir, location, line_offset))
-    findings.extend(_check_boilerplate(front_matter, body, location, line_offset))
+    findings.extend(_check_boilerplate(front_matter, body, location, line_offset, fm_lines))
     findings.extend(_check_placeholder_bullets(body, location, line_offset))
     objective_findings, objective_count = _check_objective_verbs(body, location, line_offset)
     findings.extend(objective_findings)
@@ -1487,11 +1529,12 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
 
     in_code = _code_fence_mask(body)
     lines = body.splitlines()
-    challenges = sum(
-        1
+    challenge_lines = [
+        i + 1 + line_offset
         for i, ln in enumerate(lines)
         if not in_code[i] and _div_fence(ln) == "challenge"
-    )
+    ]
+    challenges = len(challenge_lines)
     solutions = sum(
         1
         for i, ln in enumerate(lines)
@@ -1504,6 +1547,7 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
                 "divs",
                 f"{challenges} challenge(s) but only {solutions} solution(s)",
                 location=location,
+                line=challenge_lines[0],
                 hint="Review each exercise's guidance. This compares totals across the episode, "
                 "so extra solutions for one challenge can hide another with none; discussion "
                 "exercises, or guidance on what to look for, don't need a solution block.",

@@ -219,10 +219,14 @@ _UNLISTED_RE = re.compile(r"^episodes/(\S+) exists but is not listed")
 
 
 def _looks_like_reference(lesson_dir: Path, name: str) -> bool:
-    """WB013's test, run on the file itself, so the safeguard holds even
-    when WB013 was filtered out (--code) or ignored in .wbcheck.toml."""
+    """WB013's test, plus WB110/WB111 scaffold detection, run on the file
+    itself, so `fix --suggest` never proposes publishing a reference page or
+    an unedited template episode to config.yaml."""
     path = lesson_dir / "episodes" / name
-    return path.is_file() and _looks_misplaced(check_episode(path, lesson_dir))
+    if not path.is_file():
+        return False
+    ep_findings = check_episode(path, lesson_dir)
+    return _looks_misplaced(ep_findings) or any(f.code in ("WB110", "WB111") for f in ep_findings)
 
 
 def _episodes_validator(expected: list[str]) -> Callable[[str], None]:

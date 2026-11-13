@@ -366,17 +366,17 @@ def review(
             tmp.cleanup()
 
 
-def _quarto_render(kind: str, render, md_text: str, out: Path, title: str) -> Path | None:
+def _quarto_render(kind: str, render, md_text: str, out: Path, title: str) -> tuple[Path | None, bool]:
     try:
         rendered = render(md_text, out, report_title=title)
     except RuntimeError as exc:
         err.print(f"[red]quarto render failed, skipping {kind}:[/] {exc}")
-        return None
+        return None, True
     if rendered is None:
         err.print(f"[yellow]quarto not found on PATH[/], skipping {kind} (install from https://quarto.org)")
-        return None
+        return None, False
     err.print(f"[dim]wrote {rendered}[/]")
-    return rendered
+    return rendered, False
 
 
 def _write_or_print(path: Path, text: str) -> None:
@@ -505,15 +505,20 @@ def report(
     if json_out is not None:
         _write_or_print(json_out, results.to_json())
     rendered_html = None
+    render_failed = False
     if html is not None:
-        rendered_html = _quarto_render("HTML", render_html_via_quarto, md_text, html, qmd_title)
+        rendered_html, failed = _quarto_render("HTML", render_html_via_quarto, md_text, html, qmd_title)
+        render_failed = render_failed or failed
     if pdf is not None:
-        _quarto_render("PDF", render_pdf_via_quarto, md_text, pdf, qmd_title)
+        _, failed = _quarto_render("PDF", render_pdf_via_quarto, md_text, pdf, qmd_title)
+        render_failed = render_failed or failed
     if open_html:
         if rendered_html is not None:
             webbrowser.open(rendered_html.resolve().as_uri())
         else:
             err.print("[yellow]--open:[/] no HTML report was rendered, nothing to open")
+    if render_failed:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -806,7 +811,7 @@ def fix(
             err.print("[red]--changed needs the lesson to be a git repo[/]")
             raise typer.Exit(2)
         todo = [f for f in todo if f.location in changed_set]
-    todo.sort(key=lambda f: (f.location or "", f.line or 0))
+    todo.sort(key=lambda f: (SEVERITY_ORDER.get(f.severity, 9), f.location or "", f.line or 0))
 
     if print_only:
         for line in quickfix_lines(todo, lesson_dir):
@@ -1023,11 +1028,14 @@ def _doctor_rows() -> list[tuple[str, bool | None, str]]:
 @app.command()
 def explain(
     code: Annotated[str, typer.Argument(help="A rule code (WB403, ai208) or name (objectives-not-assessed).")],
+    json_out: Annotated[bool, typer.Option("--json", help="Output the rule explanation as JSON.")] = False,
 ) -> None:
     """Explain a rule: what it checks, why, what to do, when to keep the content, its limits, and sources.
 
     Works offline, with no lesson or saved results needed.
     """
+    from dataclasses import asdict
+
     from checker.help import render_text, resolve, rule_help, suggestions
 
     rule = resolve(code)
@@ -1036,7 +1044,17 @@ def explain(
         hint = f" Did you mean {', '.join(close)}?" if close else ""
         err.print(f"[red]no rule `{code}`[/].{hint} [dim]List them with `wbcheck rules`.[/]", highlight=False)
         raise typer.Exit(2)
-    typer.echo(render_text(rule_help(rule.code)))
+    h = rule_help(rule.code)
+    assert h is not None
+    if json_out:
+        payload = {
+            **asdict(h.rule),
+            "fix": h.fix,
+            "sources": [asdict(s) for s in h.sources],
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return
+    typer.echo(render_text(h))
 
 
 @app.command()
@@ -1047,8 +1065,10 @@ def rules(
         typer.Option(help="Only one topic: metadata, structure, accessibility, pedagogy, prose, "
                      "supporting-material, operations."),
     ] = None,
+    json_out: Annotated[bool, typer.Option("--json", help="Output matching rules as a JSON array.")] = False,
 ) -> None:
     """List the rules: code, default severity, topic, title. `wbcheck explain CODE` for one in full."""
+    from checker.fix import fix_capability
     from checker.help import search as search_rules
 
     try:
@@ -1059,20 +1079,45 @@ def rules(
     if not found:
         err.print("no rules match", highlight=False)
         raise typer.Exit(1)
+    if json_out:
+        payload = [
+            {
+                "code": r.code,
+                "name": r.name,
+                "default_severity": r.default_severity,
+                "topic": r.topic,
+                "authority": r.authority,
+                "detection": r.detection,
+                "fix": fix_capability(r.code),
+                "title": r.title,
+            }
+            for r in found
+        ]
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return
     for r in found:
         typer.echo(f"{r.code}  {r.default_severity:<7}  {r.topic:<19}  {r.title}")
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    json_out: Annotated[bool, typer.Option("--json", help="Output doctor checks as a JSON array.")] = False,
+) -> None:
     """Check what's installed and which optional features are ready."""
     from rich.table import Table
 
-    table = Table(show_header=False, box=None, padding=(0, 1))
-    for name, ok, detail in _doctor_rows():
-        mark = "[green]✔[/]" if ok else ("[red]✖[/]" if ok is False else "[dim]–[/]")
-        table.add_row(mark, name, Text(detail, style="dim"))
-    Console().print(table)
+    rows = _doctor_rows()
+    if json_out:
+        payload = [{"check": name, "ok": ok, "detail": detail} for name, ok, detail in rows]
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    else:
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        for name, ok, detail in rows:
+            mark = "[green]✔[/]" if ok else ("[red]✖[/]" if ok is False else "[dim]–[/]")
+            table.add_row(mark, name, Text(detail, style="dim"))
+        Console().print(table)
+    if any(name in ("wbcheck", "python", "git") and ok is False for name, ok, _ in rows):
+        raise typer.Exit(1)
 
 
 def main() -> None:

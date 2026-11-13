@@ -525,7 +525,7 @@ def render_markdown(
         lines.append("No findings in the checked scope.")
         lines.append("")
     elif not findings:
-        lines.append("All checks passed. Nothing to address before opening a PR.")
+        lines.append("All checks passed. No mechanical or AI review findings in this report.")
         lines.append("")
     else:
         by_location: dict[str, list[Finding]] = {}
