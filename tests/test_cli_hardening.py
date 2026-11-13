@@ -207,3 +207,47 @@ def test_ignore_comments_do_not_create_findings_of_their_own(tmp_path):
     ep = _episode(lesson)
     ep.write_text(ep.read_text() + "\n<!-- wbcheck-ignore WB404: it's what they're saying, isn't it, don't -->\n")
     assert sorted((f.code, f.location) for f in run_checks(lesson)) == before
+
+
+# -- AI-client CLI ergonomics (--json, report filters, fix --dry-run) ---------------------
+
+
+def test_check_json_prints_filtered_json_to_stdout(tmp_path):
+    lesson = make_lesson(tmp_path)
+    result = runner.invoke(app, ["check", str(lesson), "--episode", "episodes/01.md", "--json", "--fail-on", "never"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scope"] == "partial"
+    assert any(f["code"] == "WB213" for f in payload["findings"])
+
+
+def test_report_filters_narrow_output(tmp_path):
+    lesson = make_lesson(tmp_path)
+    runner.invoke(app, ["check", str(lesson), "--quiet"])
+    by_code = runner.invoke(app, ["report", str(lesson), "--code", "WB213", "--json", "-"])
+    assert by_code.exit_code == 0
+    codes = {f["code"] for f in json.loads(by_code.stdout)["findings"]}
+    assert codes == {"WB213"}
+
+    by_ep = runner.invoke(app, ["report", str(lesson), "--episode", "episodes/01.md", "--lines", "-"])
+    assert by_ep.exit_code == 0
+    assert all("01.md:" in ln for ln in by_ep.stdout.strip().splitlines())
+
+
+def test_fix_dry_run_works_without_a_terminal_and_writes_nothing(tmp_path, monkeypatch):
+    _no_terminal(monkeypatch)
+    lesson = make_lesson(tmp_path)
+    ep = _episode(lesson)
+    before = ep.read_text()
+
+    apply_res = runner.invoke(app, ["fix", str(lesson), "--apply", "--dry-run"])
+    assert apply_res.exit_code == 0, apply_res.output
+    assert "-#### Too deep" in apply_res.stdout
+    assert "+### Too deep" in apply_res.stdout
+    assert ep.read_text() == before
+
+    suggest_res = runner.invoke(app, ["fix", str(lesson), "--suggest", "--dry-run"])
+    assert suggest_res.exit_code == 0, suggest_res.output
+    assert "-- Understand the difference between copy and sync." in suggest_res.stdout
+    assert "+- Explain the difference between copy and sync." in suggest_res.stdout
+    assert ep.read_text() == before

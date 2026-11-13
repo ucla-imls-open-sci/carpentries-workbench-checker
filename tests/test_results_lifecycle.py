@@ -334,3 +334,51 @@ def test_partial_results_are_labelled_in_reports(tmp_path):
     runner.invoke(app, ["report", str(d), "--md", str(md)])
     text = md.read_text()
     assert "Partial results" in text and "All checks passed" not in text
+
+
+def test_episode_check_with_annotations_does_not_duplicate_wb115(tmp_path):
+    d = make_lesson(
+        tmp_path,
+        episodes={
+            "01.md": episode("#### Skipped in 01\n"),
+            "02.md": episode("#### Skipped in 02\n"),
+        },
+    )
+    runner.invoke(app, ["check", str(d), "-q"])
+    runner.invoke(app, ["fix", str(d), "--annotate"])
+    runner.invoke(app, ["check", str(d), "-q"])
+    runner.invoke(app, ["check", str(d), "--episode", "01.md", "-q"])
+    saved = load(default_results_path(d))
+    ids = [f.id for f in saved.findings]
+    assert len(ids) == len(set(ids)), f"duplicate finding IDs: {ids}"
+    wb115_locs = [f.location for f in saved.findings if f.code == "WB115"]
+    assert wb115_locs.count("episodes/01.md") == 1
+    assert wb115_locs.count("episodes/02.md") == 1
+
+
+def test_episode_check_accepts_episodes_prefix_and_bad_episode_preserves_results(tmp_path):
+    d = make_lesson(tmp_path, episodes={"01.md": episode(), "02.md": episode("# Top level\n\ntext\n")})
+    runner.invoke(app, ["check", str(d), "-q"])
+    ok = runner.invoke(app, ["check", str(d), "--episode", "episodes/01.md", "-q"])
+    assert ok.exit_code == 0, ok.output
+    bad = runner.invoke(app, ["check", str(d), "--episode", "nope.md", "-q"])
+    assert bad.exit_code == 2
+    saved = load(default_results_path(d))
+    assert saved.scope == "full"
+    assert not any(f.code == "WB012" for f in saved.findings)
+    assert any(f.location == "episodes/02.md" for f in saved.findings)
+
+
+def test_annotate_and_clean_annotations_keep_ai_findings_fresh_and_sync_results(tmp_path, monkeypatch):
+    d = make_lesson(tmp_path, episodes={"01.md": episode("#### Skipped heading\n\nSome content here.\n")})
+    monkeypatch.setattr("checker.ai_review.review_episode", fake_review())
+    runner.invoke(app, ["review", str(d)])
+    runner.invoke(app, ["fix", str(d), "--annotate"])
+    saved_after_annotate = load(default_results_path(d))
+    assert any(f.code == "WB115" for f in saved_after_annotate.findings)
+    assert not ai(saved_after_annotate)[0].stale
+
+    runner.invoke(app, ["fix", str(d), "--clean-annotations"])
+    saved_after_clean = load(default_results_path(d))
+    assert not any(f.code == "WB115" for f in saved_after_clean.findings)
+    assert not ai(saved_after_clean)[0].stale

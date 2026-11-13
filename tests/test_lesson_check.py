@@ -934,3 +934,22 @@ def test_objective_rewrite_drops_trailing_period():
     body = ":::: objectives\n- Understand what a remote is.\n::::\n"
     [f], _ = _check_objective_verbs(body, "ep.md")
     assert 'Try "Explain what a remote is", then' in f.hint
+
+
+def test_sandpaper_generated_html_links_are_not_flagged(tmp_path):
+    lesson = tmp_path / "lesson"
+    (lesson / "episodes").mkdir(parents=True)
+    (lesson / "profiles").mkdir()
+    (lesson / "profiles" / "learner-profiles.md").write_text("# Profiles\n")
+    (lesson / "CITATION.cff").write_text("cff-version: 1.2.0\n")
+    links = (
+        "[personas](profiles.html) and [cite](citation.html) and "
+        "[all](aio.html) and [keys](key-points.html) and [imgs](images.html)\n"
+    )
+    findings = _check_links(links, lesson, "episodes/01.md")
+    assert not [f for f in findings if f.code == "WB304"]
+
+    # If learner-profiles.md is missing, profiles.html is still flagged
+    (lesson / "profiles" / "learner-profiles.md").unlink()
+    findings_missing = _check_links("[personas](profiles.html)\n", lesson, "episodes/01.md")
+    assert [f.code for f in findings_missing] == ["WB304"]

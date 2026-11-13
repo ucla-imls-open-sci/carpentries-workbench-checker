@@ -30,7 +30,7 @@ from checker.annotate import strip_notes
 from checker.cli import _read_glossary, _resolve_target
 from checker.console import render_ai_reviews, render_findings, render_results
 from checker.ignore import IgnoreRules, load_ignore
-from checker.lesson_check import run_checks
+from checker.lesson_check import normalize_episode_name, run_checks
 from checker.report import (
     SEVERITY_ORDER,
     Finding,
@@ -169,6 +169,9 @@ def check(
         bool, typer.Option("--show-source", help="Show the source line under each finding.")
     ] = False,
     legacy_source: Annotated[bool, typer.Option("--source", hidden=True)] = False,
+    json_out: Annotated[
+        bool, typer.Option("--json", help="Print the checked results as JSON on stdout instead of the terminal report.")
+    ] = False,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Save results without printing the report.")] = False,
     fail_on: Annotated[
         str,
@@ -204,14 +207,20 @@ def check(
         shown = _episode_view(results, episode) if episode else results
         if changed or since:
             shown = _changed_view(shown, lesson_dir, since)
-        if not quiet:
+        if episode and any(f.code == "WB012" for f in shown.findings):
+            if json_out:
+                sys.stdout.write(shown.to_json() + "\n")
+            elif not quiet:
+                render_results(Console(), shown, show_source=show_source)
+            raise typer.Exit(2)  # --episode named a file that isn't there: could not run
+        if json_out:
+            sys.stdout.write(shown.to_json() + "\n")
+        elif not quiet:
             render_results(Console(), shown, show_source=show_source)
         err.print(f"[dim]saved {path}[/]")
     finally:
         if tmp is not None:
             tmp.cleanup()
-    if episode and any(f.code == "WB012" for f in shown.findings):
-        raise typer.Exit(2)  # --episode named a file that isn't there: could not run
     raise typer.Exit(1 if _fails(shown, fail_on) else 0)
 
 
@@ -221,7 +230,8 @@ def _episode_view(results: Results, episode: str) -> Results:
     shows and fails on the episode it was asked about."""
     from dataclasses import replace
 
-    checked = f"episodes/{episode}"
+    ep_name = normalize_episode_name(episode)
+    checked = f"episodes/{ep_name}"
     findings = [
         f for f in results.findings
         if not (f.location or "").startswith("episodes/") or f.location == checked
@@ -288,7 +298,8 @@ def review(
     try:
         episode_files = sorted(p for p in (lesson_dir / "episodes").glob("*") if p.suffix in (".md", ".Rmd"))
         if episode:
-            episode_files = [p for p in episode_files if p.name == episode]
+            ep_name = normalize_episode_name(episode)
+            episode_files = [p for p in episode_files if p.name == ep_name]
             if not episode_files:
                 err.print(f"[red]no episode named[/] `{episode}` under episodes/")
                 raise typer.Exit(2)
@@ -400,7 +411,17 @@ def report(
     show_source: Annotated[
         bool, typer.Option("--show-source", help="Show the source line under each finding.")
     ] = False,
-    legacy_source: Annotated[bool, typer.Option("--source", hidden=True)] = False,
+    episode: Annotated[str | None, typer.Option(help="Only include findings for this episode file.")] = None,
+    code: Annotated[list[str] | None, typer.Option(help="Only these rule codes (repeatable).")] = None,
+    file: Annotated[str | None, typer.Option(help="Only files matching this glob, e.g. 'episodes/0*'.")] = None,
+    min_severity: Annotated[str, typer.Option(help="Lowest severity to include: error, warning, info.")] = "info",
+    source: Annotated[str, typer.Option(help="Which findings: all, mechanical, or ai.")] = "all",
+    changed: Annotated[
+        bool, typer.Option("--changed", help="Only findings in files with uncommitted changes.")
+    ] = False,
+    since: Annotated[
+        str | None, typer.Option(help="With --changed, also include files changed since this git ref (e.g. main).")
+    ] = None,
 ) -> None:
     """Render saved results. With no output options, prints to the terminal.
 
@@ -411,9 +432,12 @@ def report(
       wbcheck report . --sarif out.sarif     for the SARIF Viewer
       wbcheck report . --lines -             file:line:col lines for editors
     """
-    if legacy_source:
-        err.print("[yellow]--source is now --show-source[/] (the old name still works for now)")
-        show_source = True
+    import fnmatch
+    from dataclasses import replace
+
+    if min_severity not in ("error", "warning", "info") or source not in ("all", "mechanical", "ai"):
+        err.print("[red]--min-severity must be error/warning/info and --source all/mechanical/ai[/]")
+        raise typer.Exit(2)
     path = results_path or default_results_path(lesson)
     if not path.exists():
         err.print(f"[red]no results at[/] {path}. Run [bold]wbcheck check {lesson}[/] first.")
@@ -423,6 +447,22 @@ def report(
     except ValueError as exc:
         err.print(f"[red]{exc}[/]")
         raise typer.Exit(2) from exc
+
+    if episode:
+        results = _episode_view(results, episode)
+    if changed or since:
+        lesson_root = Path(results.lesson_dir) if results.lesson_dir else lesson.expanduser().resolve()
+        results = _changed_view(results, lesson_root, since)
+    if code or file or min_severity != "info" or source != "all":
+        threshold = SEVERITY_ORDER[min_severity]
+        filtered = [
+            f for f in results.findings
+            if SEVERITY_ORDER.get(f.severity, 9) <= threshold
+            and (source == "all" or f.source == source)
+            and (not code or (f.code or f.category) in code)
+            and (not file or fnmatch.fnmatch(f.location or "", file))
+        ]
+        results = replace(results, findings=filtered)
 
     if sarif is not None:
         from checker.editors import sarif_text
@@ -654,6 +694,12 @@ def fix(
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="With --apply, apply the safe fixes without asking (never suggestions).")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run", "--diff", help="Show the diffs `--apply` or `--suggest` would make without writing files."
+        ),
+    ] = False,
     annotate: Annotated[
         bool,
         typer.Option("--annotate", help="Write each finding into the lesson file as a comment above the flagged "
@@ -706,20 +752,32 @@ def fix(
     if sum([annotate, clean_annotations, apply or suggest, print_only]) > 1:
         err.print("[red]Use only one of --annotate, --clean-annotations, --apply, --suggest, --print[/]")
         raise typer.Exit(2)
+    if dry_run and not (apply or suggest):
+        err.print("[red]--dry-run needs --apply or --suggest[/]")
+        raise typer.Exit(2)
     lesson_dir = lesson.expanduser().resolve()
     if not (lesson_dir / "episodes").is_dir():
         err.print(f"[red]{lesson_dir} doesn't look like a lesson[/] (no episodes/)")
         raise typer.Exit(2)
-    never_prompts = print_only or annotate or clean_annotations or (apply and yes and not suggest)
+    never_prompts = (
+        print_only
+        or annotate
+        or clean_annotations
+        or (apply and yes and not suggest)
+        or (dry_run and (apply or suggest))
+    )
     if not never_prompts:
-        _require_terminal("This mode of `wbcheck fix`", "Use --print, --annotate, or --apply --yes in scripts.",
-                          no_input)
+        _require_terminal(
+            "This mode of `wbcheck fix`", "Use --print, --annotate, --dry-run, or --apply --yes in scripts.", no_input
+        )
 
     if clean_annotations:
         from checker.annotate import clean_annotations as remove_notes
 
         removed, changed_paths = remove_notes(lesson_dir)
         if removed:
+            if default_results_path(lesson_dir).exists():
+                _refresh(str(lesson_dir), None, False, None)
             err.print(f"[green]Removed {removed} wbcheck note(s)[/] from {len(changed_paths)} file(s):")
             for rel in changed_paths:
                 err.print(f"  {lesson_dir / rel}")
@@ -765,6 +823,7 @@ def fix(
         for reason in outcome.skipped:
             err.print(f"[yellow]skipped:[/] {reason}")
         if outcome.added:
+            _refresh(str(lesson_dir), None, False, None)
             err.print("Remove them with [bold]wbcheck fix --clean-annotations[/]; "
                       "[bold]wbcheck check[/] warns (WB115) while any remain.")
         return
@@ -781,6 +840,16 @@ def fix(
         if not fixes:
             which = " or ".join(f for f, on in (("safe fix", apply), ("suggestion", suggest)) if on)
             err.print(f"None of the {len(todo)} finding(s) has a {which}; try `wbcheck fix` without flags.")
+            return
+        if dry_run:
+            shown_diffs = 0
+            for fx in fixes:
+                try:
+                    sys.stdout.write(fx.diff(lesson_dir))
+                    shown_diffs += 1
+                except ValueError as exc:
+                    err.print(f"[yellow]skipped:[/] {exc}")
+            err.print(f"[dim]dry run: {shown_diffs} fix(es) shown, no files changed.[/]")
             return
         if yes and suggest:
             err.print("[dim]--yes applies safe fixes only; each suggestion still asks.[/]")

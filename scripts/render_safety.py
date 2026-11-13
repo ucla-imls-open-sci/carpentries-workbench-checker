@@ -46,6 +46,7 @@ def _build(lesson: Path) -> bool:
 
 
 def main(argv: list[str]) -> int:
+    """Run the render-safety check from argv."""
     if len(argv) != 2:
         print(__doc__)
         return 2

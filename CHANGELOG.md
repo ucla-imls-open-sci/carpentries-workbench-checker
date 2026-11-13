@@ -10,6 +10,12 @@ Editor integration (design/2026-10-29-editor-integration-prompt.md). No change t
 - **`wbcheck fix --annotate`** writes `<!-- wbcheck CODE: message -->` above the flagged block (a YAML comment in front matter). It is idempotent, stays out of code fences, hoists above a list or a div title so rendering doesn't change, and skips a front-matter note that would change the parsed YAML. **`--clean-annotations`** removes only those notes and restores the file byte for byte.
 - **WB115**: a leftover wbcheck note is a warning in `wbcheck check`. **`--fail-on annotations`** exits 1 on errors and leftover notes.
 
+### Fixed (from design/2026-11-12-codebase-evaluation.md)
+- `check --episode` no longer duplicates `WB115` findings from other episodes in `.wbcheck/results.json` (which crashed `wbcheck tui`), accepts tab-completed `episodes/<name>.md` paths, and preserves existing saved results when `--episode` names a missing file (exit 2).
+- `fix --annotate` and `fix --clean-annotations` now strip inline notes when hashing Markdown files (keeping AI findings fresh instead of marking them `stale`) and immediately refresh `.wbcheck/results.json`.
+- `WB304` no longer flags links to Sandpaper-generated pages (`profiles.html` when `profiles/learner-profiles.md` exists, `citation.html` when `CITATION.cff` exists, and built-in `aio.html`, `key-points.html`, and `images.html`).
+- Added `check --json`, filter flags on `report` (`--episode`, `--code`, `--file`, `--min-severity`, `--source`, `--changed`, `--since`), and `fix --dry-run` (`--diff`) for non-interactive diff previews.
+
 ### Fixed (from design/2026-10-29-cli-best-practices-assessment.md)
 - `wbcheck fix` and `wbcheck tui` no longer hang without a terminal. They exit 2 and say what to use instead. `fix --no-input` refuses any mode that would prompt or open an editor. `--print`, `--annotate`, `--clean-annotations` and `--apply --yes` still work in scripts. `issues --create` without `--yes` needs a terminal too.
 - `report --json -` and `--md -` write to stdout. They used to create a file named `-`. `--html -` and `--pdf -` are rejected.

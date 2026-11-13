@@ -30,9 +30,10 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from checker.annotate import MARKDOWN_SUFFIXES, strip_notes
 from checker.cli import _blame_map, _dirty_files, _github_blob_base
 from checker.ignore import load_ignore
-from checker.lesson_check import read_lesson_metadata, run_checks
+from checker.lesson_check import normalize_episode_name, read_lesson_metadata, run_checks
 from checker.report import Finding, assign_occurrences
 from checker.results import RESULTS_DIRNAME, RESULTS_FILENAME, Results, load, save
 
@@ -89,7 +90,12 @@ def file_hashes(lesson_dir: Path) -> dict[str, str]:
             candidates += sorted((lesson_dir / folder).glob("*"))
     for path in candidates:
         if path.is_file():
-            hashes[str(path.relative_to(lesson_dir))] = hashlib.sha1(path.read_bytes()).hexdigest()[:16]
+            if path.suffix in MARKDOWN_SUFFIXES:
+                text = path.read_text(errors="replace")
+                raw = strip_notes(text).encode("utf-8") if "wbcheck " in text else path.read_bytes()
+            else:
+                raw = path.read_bytes()
+            hashes[str(path.relative_to(lesson_dir))] = hashlib.sha1(raw).hexdigest()[:16]
     return hashes
 
 
@@ -145,7 +151,22 @@ def refresh(
     notes = RefreshNotes()
     target_id = normalize_target(target, lesson_dir, is_clone)
     hashes = file_hashes(lesson_dir)
+    ep_name = normalize_episode_name(episode)
     fresh = run_checks(lesson_dir, episode_filter=episode)  # IDs assigned here, once
+    if ep_name and any(f.code == "WB012" for f in fresh):
+        return (
+            Results(
+                target=target,
+                lesson_dir=None if is_clone else str(lesson_dir),
+                findings=fresh,
+                metadata=read_lesson_metadata(lesson_dir),
+                target_id=target_id,
+                revision=git_revision(lesson_dir),
+                scope="full",
+                file_hashes=hashes,
+            ),
+            notes,
+        )
 
     old = _load_existing(path, notes)
     if old is not None and not _same_target(old, target_id, target):
@@ -154,8 +175,8 @@ def refresh(
 
     scope = "full"
     mechanical = fresh
-    if episode:
-        checked = f"episodes/{episode}"
+    if ep_name:
+        checked = f"episodes/{ep_name}"
         if old is not None and old.scope == "full":
             others = [
                 f for f in old.findings

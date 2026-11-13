@@ -1361,12 +1361,19 @@ def _check_links(body: str, lesson_dir: Path, location: str, line_offset: int = 
             # literal file on disk -- check for the source instead, either
             # extension, an episode can be written in either.
             check_path = path.split("#", 1)[0]
+            if not check_path:
+                continue
+            page_name = Path(check_path).name
+            if page_name in ("aio.html", "key-points.html", "images.html"):
+                continue
             candidates = [check_path]
             if check_path.endswith(".html"):
                 stem = check_path[: -len(".html")]
                 candidates = [stem + ".md", stem + ".Rmd"]
-            if not check_path:
-                continue
+                if page_name == "profiles.html":
+                    candidates.extend(["learner-profiles.md", "learner-profiles.Rmd"])
+                elif page_name == "citation.html":
+                    candidates.append("CITATION.cff")
             search_dirs = (
                 episode_dir,
                 lesson_dir,
@@ -1507,9 +1514,23 @@ def check_episode(path: Path, lesson_dir: Path) -> list[Finding]:
     return findings
 
 
-def check_leftover_notes(lesson_dir: Path) -> list[Finding]:
+def normalize_episode_name(episode_filter: str | None) -> str | None:
+    """Strip an optional leading `./` and `episodes/` prefix from `--episode`."""
+    if not episode_filter:
+        return None
+    cleaned = episode_filter.strip()
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    if cleaned.startswith("episodes/"):
+        cleaned = cleaned[len("episodes/") :]
+    return cleaned
+
+
+def check_leftover_notes(lesson_dir: Path, episode_filter: str | None = None) -> list[Finding]:
     """WB115: one finding per `wbcheck fix --annotate` note still in the
     lesson. CI can block a publish on these with `--fail-on annotations`."""
+    ep_name = normalize_episode_name(episode_filter)
+    checked_ep = f"episodes/{ep_name}" if ep_name else None
     return [
         Finding(
             "warning",
@@ -1522,6 +1543,7 @@ def check_leftover_notes(lesson_dir: Path) -> list[Finding]:
             identity_anchor=f"{note.code}: {note.text}",
         )
         for note in find_notes(lesson_dir)
+        if not checked_ep or not note.location.startswith("episodes/") or note.location == checked_ep
     ]
 
 
@@ -1552,9 +1574,10 @@ def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Find
         )
         return findings
 
+    ep_name = normalize_episode_name(episode_filter)
     episode_files = sorted(p for p in episodes_dir.glob("*") if p.suffix in (".md", ".Rmd"))
-    if episode_filter:
-        episode_files = [p for p in episode_files if p.name == episode_filter]
+    if ep_name:
+        episode_files = [p for p in episode_files if p.name == ep_name]
         if not episode_files:
             findings.append(
                 Finding(
@@ -1589,5 +1612,5 @@ def run_checks(lesson_dir: Path, episode_filter: str | None = None) -> list[Find
             )
         findings.extend(episode_findings)
 
-    findings.extend(check_leftover_notes(lesson_dir))
+    findings.extend(check_leftover_notes(lesson_dir, episode_filter=ep_name))
     return assign_occurrences(findings)
